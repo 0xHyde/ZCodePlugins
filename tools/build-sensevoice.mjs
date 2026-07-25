@@ -38,7 +38,7 @@ async function findFile(directory, filename) {
 
 async function addSegmentOutput(source) {
   const file = path.join(source, "runtime", "llama.cpp", "funasr-sensevoice", "funasr-sensevoice.cpp");
-  let code = await fs.readFile(file, "utf8");
+  let code = (await fs.readFile(file, "utf8")).replace(/\r\n/g, "\n");
   const replacements = [
     [
       "  auto run_seg=[&](const std::vector<float>& fb,int T){",
