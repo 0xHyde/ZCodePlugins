@@ -30,7 +30,15 @@ jobs:
 
       - name: Run JavaScript tests and plugin validation
         run: |
-          npm run test:voice-transcriber
+          $testOutput = & npm run test:voice-transcriber 2>&1
+          $testExitCode = $LASTEXITCODE
+          $testOutput | ForEach-Object { Write-Host $_ }
+          if ($testExitCode -ne 0) {
+            $diagnostic = (($testOutput | Out-String).Trim() -replace "%", "%25" -replace "`r", "%0D" -replace "`n", "%0A")
+            if ($diagnostic.Length -gt 3500) { $diagnostic = $diagnostic.Substring($diagnostic.Length - 3500) }
+            Write-Output "::error title=Windows JavaScript tests failed::$diagnostic"
+            exit $testExitCode
+          }
           npm run validate
 
       - name: Verify Windows runtime files
