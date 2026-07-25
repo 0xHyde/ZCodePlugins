@@ -19,11 +19,10 @@ SenseVoice 子运行时默认放在同一平台目录下，文件名为 `sense-v
 
 ## 当前发布阻塞项
 
-- P0：完成 SenseVoice.cpp 的真实 native runtime，确认 WAV 输入和 MP3、M4A 等格式的预处理链路。
-- P0：为 macOS、Windows、Linux 发布合规的 ffmpeg 音频转换器，或提供等价的内置解码实现。
-- P0：建立合规的 GitHub Release 模型源，发布 `model-manifest.json`、SHA256 和版本号；插件安装后首次转写自动下载，下载失败给出可操作错误。
-- P0：完成 CAM++ ONNX Runtime adapter，并提供 macOS、Windows 构建产物。当前已经完成原生协议、macOS arm64 构建和空闲释放；Windows 已加入 GitHub Actions 构建流程，仍需 CI 实际跑通和真实音频验收。
-- P0：在常见个人电脑上完成真实音频基准，记录冷启动、实时率、内存和长录音稳定性。
-- P1：用带时间戳的真实会议录音验证 VAD、说话人分离、自动匹配和误识别回退。
+- P0：创建第一个 GitHub Release，发布 Windows x64 runtime、`runtime-manifest.json`、模型 `model-manifest.json`、SHA256 和版本号。
+- P0：在 Windows 上用真实 SenseVoice Q8、CAM++ 模型和会议录音完成端到端验收；当前 CI 已验证编译、启动、测试和打包，但没有把模型放入 CI。
+- P0：确认 ZCode Marketplace 安装流程能够读取 manifest，并在首次转写时自动下载缺失 runtime/model。
+- P1：确认 Windows 用户没有 ffmpeg 时的自动发现、清晰提示或 ZCode 提供的音频转换能力。
+- P1：在常见 CPU / 内存档位上记录冷启动、实时率、内存和长录音稳定性。
 - P1：增加声纹档案加密、文件权限、数据删除和版本迁移。
-- P1：完成模型/运行时许可证、代码签名、安装升级和 ZCode Marketplace 发布验收。
+- P1：完成模型/运行时许可证、代码签名和正式 Marketplace 发布验收。

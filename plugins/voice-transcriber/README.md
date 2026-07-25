@@ -18,14 +18,16 @@ ZCode 本地录音转写与说话人学习插件。
 - 发布版首次转写时按项目 GitHub Release manifest 自动下载模型，并校验 SHA256
 - CAM++ JSONL adapter 协议、已确认片段注册、自动匹配和可回滚学习
 - CAM++ 原生 ONNX Runtime adapter 构建脚本，macOS arm64 已完成真实构建和端到端验证
+- Windows x64 原生 runtime 已由 GitHub Actions 成功编译、验证并打包
+- 可选的 GitHub Release runtime manifest；缺少平台二进制时按需下载并校验 SHA256
 - 可供 ZCode Agent 消费的 JSON/Markdown 转写产物、分页读取和本地搜索
 
 仍需完成的发布工作：
 
-- 将 SenseVoice.cpp 封装为各平台 native binary
-- 将 3D-Speaker CAM++ ONNX Runtime 封装为 Windows 构建产物，并完成真实会议音频验收；Linux 暂不纳入当前发布范围
-- 在常见 CPU / 内存档位上完成端到端性能基准
-- Windows/macOS/Linux native binary 打包
+- 创建第一个正式 GitHub Release，并配置 runtime/model manifest
+- 在 Windows 上使用真实模型和会议音频完成端到端验收；Linux 暂不纳入当前发布范围
+- 在常见 CPU / 内存档位上补齐端到端性能基准
+- 完成 ffmpeg 依赖发现、代码签名和 Marketplace 安装验收
 
 ## 本地运行
 
@@ -51,11 +53,14 @@ ZCODE_CAMPP_MODEL=/absolute/path/to/campp.onnx
 ZCODE_CAMPP_COMMAND=/absolute/path/to/campp-adapter
 ZCODE_CAMPP_ARGS='["--model","/absolute/path/to/campp.onnx"]'
 ZCODE_VOICE_MODEL_MANIFEST_URL=https://raw.githubusercontent.com/OWNER/REPO/main/model-manifest.json
+ZCODE_VOICE_RUNTIME_MANIFEST_URL=https://raw.githubusercontent.com/OWNER/REPO/main/runtime-manifest.json
 ```
 
 SenseVoice.cpp 自带 Silero-VAD；默认使用最多 4 个线程，可通过 `ZCODE_VOICE_THREADS` 调整。CAM++ adapter 默认空闲 30 秒后自动关闭，可通过 `ZCODE_CAMPP_IDLE_MS` 调整。
 
 也可以在 ZCode 插件配置中填写“模型下载 manifest”。插件安装后不主动占用网络；第一次真正转写时才下载缺失模型。下载地址必须是项目方提供的 GitHub Release 或 raw 文件地址，模型授权和发布由项目方负责。
+
+运行时 manifest 同样是可选配置。只有找不到本地或插件内的 SenseVoice/CAM++ runtime 时，插件才会下载当前平台文件到本地数据目录；下载后会校验 SHA256，闲置时 CAM++ 进程仍会自动释放。
 
 CAM++ adapter 接入前，转写仍可运行，但会明确标记说话人识别未配置；不会生成伪造声纹。摘要、会议纪要和调研分析由 ZCode Agent 完成，本插件不内置摘要大模型。
 

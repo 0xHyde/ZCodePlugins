@@ -21,6 +21,10 @@
 
 这里的 GitHub 地址需要在最终发布前替换为项目方实际维护的 Release/Raw 地址；仓库不伪造默认下载源。模型权重必须先确认对应许可证允许再分发，不能因为代码仓库公开就默认可以打包或镜像。
 
+## Runtime manifest
+
+原生运行时不提交到 Git。可在 ZCode 配置 `ZCODE_VOICE_RUNTIME_MANIFEST_URL`，运行时缺失时插件会按当前平台下载并校验 `sense-voice-main`、`campp-adapter` 和 ONNX Runtime 动态库。运行时清单与模型清单分开，便于独立升级；没有配置清单时仍可使用插件内或用户手动指定的运行时。
+
 manifest 最小格式：
 
 ```json

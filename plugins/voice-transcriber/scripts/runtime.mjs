@@ -12,6 +12,12 @@ export function bundledRuntimeCandidates(pluginRoot, executable) {
   return names.map((name) => path.join(pluginRoot, "bin", process.platform, process.arch, name));
 }
 
+export function downloadedRuntimeCandidates(dataRoot, executable) {
+  const names = [executable];
+  if (process.platform === "win32" && !executable.toLowerCase().endsWith(".exe")) names.push(`${executable}.exe`);
+  return names.map((name) => path.join(dataRoot, "runtimes", `${process.platform}-${process.arch}`, name));
+}
+
 export async function isFile(file) {
   const stat = await fs.stat(file).catch(() => null);
   return Boolean(stat?.isFile());
@@ -35,7 +41,7 @@ export async function commandAvailable(command) {
   return false;
 }
 
-export async function resolveRuntimeCommand({ pluginRoot, configured, defaultName }) {
+export async function resolveRuntimeCommand({ pluginRoot, dataRoot, configured, defaultName }) {
   const value = configuredValue(configured);
   if (value && (path.isAbsolute(value) || value.includes(path.sep) || (process.platform === "win32" && value.includes("/")))) {
     return { command: value, source: "config", exists: await isFile(value) };
@@ -44,6 +50,11 @@ export async function resolveRuntimeCommand({ pluginRoot, configured, defaultNam
   for (const name of bundledNames) {
     for (const candidate of bundledRuntimeCandidates(pluginRoot, name)) {
       if (await isFile(candidate)) return { command: candidate, source: "bundled", exists: true };
+    }
+    if (dataRoot) {
+      for (const candidate of downloadedRuntimeCandidates(dataRoot, name)) {
+        if (await isFile(candidate)) return { command: candidate, source: "downloaded", exists: true };
+      }
     }
   }
   const command = value || defaultName;

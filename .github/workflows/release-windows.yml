@@ -1,0 +1,74 @@
+name: Release Windows voice runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish, for example v0.1.0"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build SenseVoice.cpp runtime
+        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'main' }} --jobs 2
+
+      - name: Build CAM++ ONNX Runtime adapter
+        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2
+
+      - name: Run JavaScript tests and plugin validation
+        shell: cmd
+        run: |
+          npm run test:voice-transcriber
+          if errorlevel 1 exit /b 1
+          npm run validate
+
+      - name: Verify Windows runtime files
+        run: |
+          $runtime = "plugins/voice-transcriber/bin/win32/x64"
+          foreach ($file in @("sense-voice-main.exe", "campp-adapter.exe", "onnxruntime.dll")) {
+            if (!(Test-Path (Join-Path $runtime $file))) { throw "Runtime file missing: $file" }
+          }
+
+      - name: Prepare release assets
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "plugins/voice-transcriber/bin/win32/x64/*" -DestinationPath "dist/voice-transcriber-win32-x64.zip"
+          Copy-Item "plugins/voice-transcriber/bin/win32/x64/*" -Destination dist -Force
+          node tools/create-runtime-manifest.mjs `
+            --input "plugins/voice-transcriber/bin/win32/x64" `
+            --version $env:RELEASE_TAG `
+            --repository $env:GITHUB_REPOSITORY `
+            --output "dist/runtime-manifest.json"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release create $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "voice-transcriber $env:RELEASE_TAG" `
+            --generate-notes `
+            dist/*

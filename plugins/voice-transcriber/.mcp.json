@@ -13,7 +13,8 @@
         "ZCODE_SENSEVOICE_BINARY": "${user_config.sensevoice_binary}",
         "ZCODE_AUDIO_CONVERTER": "${user_config.audio_converter}",
         "ZCODE_CAMPP_COMMAND": "${user_config.campp_command}",
-        "ZCODE_VOICE_MODEL_MANIFEST_URL": "${user_config.model_manifest_url}"
+        "ZCODE_VOICE_MODEL_MANIFEST_URL": "${user_config.model_manifest_url}",
+        "ZCODE_VOICE_RUNTIME_MANIFEST_URL": "${user_config.runtime_manifest_url}"
       }
     }
   }

@@ -55,6 +55,12 @@
       "description": "GitHub Release 中的模型 manifest.json 地址；首次转写时自动下载模型",
       "type": "string",
       "default": ""
+    },
+    "runtime_manifest_url": {
+      "title": "运行时下载 manifest",
+      "description": "可选的 GitHub Release 运行时清单；找不到平台二进制时自动下载",
+      "type": "string",
+      "default": ""
     }
   }
 }

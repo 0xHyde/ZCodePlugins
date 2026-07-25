@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { ensureModels } from "./model-bootstrap.mjs";
+import { ensureRuntime } from "./runtime-bootstrap.mjs";
 import { resolveRuntimeCommand } from "./runtime.mjs";
 import { parseSenseVoiceOutput } from "./sensevoice-parser.mjs";
 import { prepareAudio } from "./audio-prep.mjs";
@@ -17,6 +18,7 @@ const cacheRoot = path.join(dataRoot, "cache");
 const learningRoot = path.join(dataRoot, "learning");
 const artifactRoot = path.join(dataRoot, "artifacts");
 const modelRoot = path.join(dataRoot, "models");
+let runtimeBootstrapPromise = null;
 
 async function ensureDirs() {
   await Promise.all([
@@ -72,18 +74,37 @@ async function resolveModel(envName, defaultName) {
   return { path: discovered, source: "data", exists: await isFile(discovered) };
 }
 
-async function resolveSenseVoiceRuntime() {
-  return resolveRuntimeCommand({
-    pluginRoot,
-    configured: process.env.ZCODE_SENSEVOICE_BINARY,
-    defaultName: "sense-voice-main",
-  });
+async function ensureDownloadedRuntime() {
+  if (!process.env.ZCODE_VOICE_RUNTIME_MANIFEST_URL || process.env.ZCODE_VOICE_RUNTIME_MANIFEST_URL.startsWith("${")) return null;
+  if (!runtimeBootstrapPromise) runtimeBootstrapPromise = ensureRuntime({ dataRoot });
+  return runtimeBootstrapPromise;
 }
 
-function requireSenseVoiceRuntime(runtime) {
-  if (!runtime.exists) {
-    throw fail(`找不到 SenseVoice 运行时：${runtime.command}。请安装或将平台运行时放入插件 bin/${process.platform}/${process.arch}/。`, "sensevoice_runtime_not_found");
+async function resolveBackendRuntime(commandEnv, defaultName, { bootstrap = false } = {}) {
+  let runtime = await resolveRuntimeCommand({
+    pluginRoot,
+    dataRoot,
+    configured: process.env[commandEnv],
+    defaultName,
+  });
+  if (bootstrap && !runtime.exists) {
+    await ensureDownloadedRuntime();
+    runtime = await resolveRuntimeCommand({
+      pluginRoot,
+      dataRoot,
+      configured: process.env[commandEnv],
+      defaultName,
+    });
   }
+  return runtime;
+}
+
+async function resolveSenseVoiceRuntime(options = {}) {
+  return resolveBackendRuntime("ZCODE_SENSEVOICE_BINARY", "sense-voice-main", options);
+}
+
+async function resolveCamppRuntime(options = {}) {
+  return resolveBackendRuntime("ZCODE_CAMPP_COMMAND", "campp-adapter", options);
 }
 
 async function runtimeStatus() {
@@ -91,15 +112,12 @@ async function runtimeStatus() {
   const vadModel = await resolveModel("ZCODE_FSMN_VAD_MODEL", "fsmn-vad.gguf");
   const camppModel = await resolveModel("ZCODE_CAMPP_MODEL", "cam++.onnx");
   const senseVoice = await resolveSenseVoiceRuntime();
-  const camppRuntime = await resolveRuntimeCommand({
-    pluginRoot,
-    configured: process.env.ZCODE_CAMPP_COMMAND,
-    defaultName: "campp-adapter",
-  });
+  const camppRuntime = await resolveCamppRuntime();
   return {
     status: "ok",
     dataRoot,
     modelsRoot: modelRoot,
+    runtimeManifestConfigured: Boolean(process.env.ZCODE_VOICE_RUNTIME_MANIFEST_URL),
     asr: {
       binary: senseVoice.command,
       binarySource: senseVoice.source,
@@ -122,6 +140,13 @@ async function runtimeStatus() {
     },
   };
 }
+
+function requireSenseVoiceRuntime(runtime) {
+  if (!runtime.exists) {
+    throw fail(`找不到 SenseVoice 运行时：${runtime.command}。请安装或将平台运行时放入插件 bin/${process.platform}/${process.arch}/。`, "sensevoice_runtime_not_found");
+  }
+}
+
 
 function artifactDir(taskId) {
   return path.join(artifactRoot, taskId);
@@ -236,16 +261,26 @@ class JsonlBackendClient {
     this.starting = (async () => {
       const runtime = await resolveRuntimeCommand({
         pluginRoot,
+        dataRoot,
         configured: process.env[this.commandEnv],
         defaultName: this.defaultName,
       });
-      if (!runtime.exists) throw fail(`找不到说话人运行时：${runtime.command}。请安装或将平台 adapter 放入插件 bin/${process.platform}/${process.arch}/。`, "backend_not_configured");
+      if (!runtime.exists) {
+        await ensureDownloadedRuntime();
+      }
+      const resolvedRuntime = runtime.exists ? runtime : await resolveRuntimeCommand({
+        pluginRoot,
+        dataRoot,
+        configured: process.env[this.commandEnv],
+        defaultName: this.defaultName,
+      });
+      if (!resolvedRuntime.exists) throw fail(`找不到说话人运行时：${resolvedRuntime.command}。请安装或将平台 adapter 放入插件 bin/${process.platform}/${process.arch}/。`, "backend_not_configured");
       let extraArgs = [];
       if (process.env[this.argsEnv]) {
         extraArgs = JSON.parse(process.env[this.argsEnv]);
         if (!Array.isArray(extraArgs)) throw fail(`${this.argsEnv} 必须是 JSON 数组。`, "invalid_backend_args");
       }
-      const child = spawn(runtime.command, [...extraArgs.map(String), "--stdio"], {
+      const child = spawn(resolvedRuntime.command, [...extraArgs.map(String), "--stdio"], {
         cwd: pluginRoot,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
@@ -314,12 +349,8 @@ async function configureCamppRuntime() {
   if (process.env.ZCODE_VOICE_MOCK === "1" && (!configured || configured.startsWith("${"))) {
     return { command: "campp-adapter", source: "mock-disabled", exists: false };
   }
-  const runtime = await resolveRuntimeCommand({
-    pluginRoot,
-    configured: process.env.ZCODE_CAMPP_COMMAND,
-    defaultName: "campp-adapter",
-  });
-  if (runtime.exists && runtime.source === "bundled") process.env.ZCODE_CAMPP_COMMAND = runtime.command;
+  const runtime = await resolveCamppRuntime({ bootstrap: true });
+  if (runtime.exists && ["bundled", "downloaded"].includes(runtime.source)) process.env.ZCODE_CAMPP_COMMAND = runtime.command;
   return runtime;
 }
 
@@ -350,7 +381,7 @@ async function runSenseVoice(audioPath, options = {}) {
     return { text: process.env.ZCODE_VOICE_MOCK_TEXT || "这是本地语音引擎的测试转写结果。", backend: "mock", model: "mock" };
   }
 
-  const runtime = await resolveSenseVoiceRuntime();
+  const runtime = await resolveSenseVoiceRuntime({ bootstrap: true });
   requireSenseVoiceRuntime(runtime);
   await ensureModels({ dataRoot });
   const modelInfo = await resolveModel("ZCODE_SENSEVOICE_MODEL", "sense-voice-small-q8_0.gguf");

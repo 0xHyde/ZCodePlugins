@@ -29,6 +29,8 @@ tools/                  工作区级验证和基准工具
 npm run test:voice-transcriber
 ```
 
+推送 `v*` 标签会触发 Windows x64 runtime 构建和 GitHub Release 发布流程；Release 同时包含 ZIP、独立二进制文件和 `runtime-manifest.json`。模型仍通过独立的模型 manifest 由用户下载。
+
 ## 构建 SenseVoice.cpp runtime
 
 需要本机已安装 Git、CMake 和 C++ 编译工具链。构建不会下载模型：
