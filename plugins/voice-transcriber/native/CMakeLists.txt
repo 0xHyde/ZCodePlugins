@@ -33,6 +33,12 @@ target_include_directories(campp-adapter PRIVATE
 target_link_directories(campp-adapter PRIVATE "${ONNXRUNTIME_LIBRARY}")
 target_link_libraries(campp-adapter PRIVATE onnxruntime)
 
+if(MSVC)
+  # 3D-Speaker's feature code uses M_PI from <math.h>; MSVC only exposes it
+  # when this compatibility macro is defined before the headers are parsed.
+  target_compile_definitions(campp-adapter PRIVATE _USE_MATH_DEFINES NOMINMAX)
+endif()
+
 if(APPLE)
   set_target_properties(campp-adapter PROPERTIES
     BUILD_RPATH "@loader_path"
