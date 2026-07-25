@@ -18,14 +18,21 @@ function fail(message, code) {
   return error;
 }
 
-function isGitHubUrl(value) {
+const allowedModelHosts = [
+  "github.com",
+  "raw.githubusercontent.com",
+  "githubusercontent.com",
+  "huggingface.co",
+  "hf.co",
+  "huggingfaceusercontent.com",
+  "modelscope.cn",
+  "modelscope.com",
+];
+
+function isAllowedModelUrl(value) {
   const url = new URL(value);
-  return url.protocol === "https:" && (
-    url.hostname === "github.com" ||
-    url.hostname.endsWith(".github.com") ||
-    url.hostname === "raw.githubusercontent.com" ||
-    url.hostname.endsWith(".githubusercontent.com") ||
-    url.hostname === "objects.githubusercontent.com"
+  return url.protocol === "https:" && allowedModelHosts.some((host) =>
+    url.hostname === host || url.hostname.endsWith(`.${host}`)
   );
 }
 
@@ -51,7 +58,7 @@ async function sha256(file) {
 
 async function fetchManifest(manifestUrl) {
   try {
-    if (!isGitHubUrl(manifestUrl)) throw fail("模型 manifest 必须来自 GitHub HTTPS 地址。", "invalid_model_source");
+    if (!isAllowedModelUrl(manifestUrl)) throw fail("模型 manifest 必须来自 GitHub、ModelScope 或 Hugging Face 的 HTTPS 地址。", "invalid_model_source");
   } catch (error) {
     if (error.code) throw error;
     throw fail(`模型 manifest 地址无效：${error.message}`, "invalid_model_source");
@@ -66,6 +73,7 @@ async function fetchManifest(manifestUrl) {
 }
 
 async function downloadFile(url, target) {
+  if (!isAllowedModelUrl(url)) throw fail(`模型 ${url} 下载地址必须来自 GitHub、ModelScope 或 Hugging Face。`, "invalid_model_source");
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok || !response.body) throw fail(`模型下载失败：HTTP ${response.status}`, "model_download_failed");
   const temporary = `${target}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.part`;
@@ -88,6 +96,30 @@ function validateFileEntry(entry) {
   if (entry.size !== undefined && (!Number.isSafeInteger(entry.size) || entry.size < 0)) {
     throw fail(`模型 ${entry.name} 缺少有效文件大小。`, "invalid_model_manifest");
   }
+  if (entry.urls !== undefined && (!Array.isArray(entry.urls) || entry.urls.some((url) => typeof url !== "string"))) {
+    throw fail(`模型 ${entry.name} 的备用下载地址无效。`, "invalid_model_manifest");
+  }
+}
+
+async function downloadAndVerify(entry, urls, target) {
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      await downloadFile(url, target);
+      const downloadedSize = (await fs.stat(target)).size;
+      if (entry.size !== undefined && downloadedSize !== entry.size) {
+        throw fail(`下载的模型大小校验失败：${entry.name}`, "model_size_mismatch");
+      }
+      if (await sha256(target) !== entry.sha256.toLowerCase()) {
+        throw fail(`下载的模型校验失败：${entry.name}`, "model_checksum_mismatch");
+      }
+      return url;
+    } catch (error) {
+      await fs.rm(target, { force: true });
+      lastError = error;
+    }
+  }
+  throw lastError || fail(`模型没有可用下载地址：${entry.name}`, "model_download_failed");
 }
 
 export async function ensureModels({ dataRoot, manifestUrl = process.env.ZCODE_VOICE_MODEL_MANIFEST_URL } = {}) {
@@ -125,23 +157,13 @@ export async function ensureModels({ dataRoot, manifestUrl = process.env.ZCODE_V
       throw fail(`本地模型校验失败：${entry.name}`, "model_checksum_mismatch");
     }
     const baseUrl = manifest.baseUrl || manifestUrl;
-    let url;
+    const candidateValues = [entry.url, ...(entry.urls || [])].filter(Boolean);
     try {
-      url = new URL(entry.url || entry.name, baseUrl).toString();
-      if (!isGitHubUrl(url)) throw fail(`模型 ${entry.name} 下载地址必须来自 GitHub。`, "invalid_model_source");
+      const urls = [...candidateValues.map((value) => new URL(value, baseUrl).toString()), new URL(entry.name, baseUrl).toString()];
+      await downloadAndVerify(entry, urls, target);
     } catch (error) {
       if (error.code) throw error;
       throw fail(`模型 ${entry.name} 下载地址无效：${error.message}`, "invalid_model_source");
-    }
-    await downloadFile(url, target);
-    const downloadedSize = (await fs.stat(target)).size;
-    if (entry.size !== undefined && downloadedSize !== entry.size) {
-      await fs.rm(target, { force: true });
-      throw fail(`下载的模型大小校验失败：${entry.name}`, "model_size_mismatch");
-    }
-    if (await sha256(target) !== entry.sha256.toLowerCase()) {
-      await fs.rm(target, { force: true });
-      throw fail(`下载的模型校验失败：${entry.name}`, "model_checksum_mismatch");
     }
     downloaded.push(entry.name);
   }

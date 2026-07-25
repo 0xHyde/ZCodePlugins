@@ -34,7 +34,7 @@ ZCODE_CAMPP_MODEL=/path/to/cam++.onnx
 ZCODE_SENSEVOICE_BINARY=sense-voice-main
 ZCODE_CAMPP_COMMAND=/path/to/campp-adapter
 ZCODE_AUDIO_CONVERTER=ffmpeg
-ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/OWNER/REPO/releases/download/models-v0.1.0/model-manifest.json
+ZCODE_VOICE_MODEL_MANIFEST_URL=https://raw.githubusercontent.com/0xHyde/ZCodePlugins/main/model-manifest.json
 ZCODE_VOICE_RUNTIME_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json
 ```
 

@@ -52,9 +52,9 @@
     },
     "model_manifest_url": {
       "title": "模型下载 manifest",
-      "description": "GitHub Release 中的模型 manifest.json 地址；首次转写时自动下载模型",
+      "description": "GitHub、ModelScope 或 Hugging Face 的模型 manifest 地址；首次转写时自动下载模型",
       "type": "string",
-      "default": ""
+      "default": "https://raw.githubusercontent.com/0xHyde/ZCodePlugins/main/model-manifest.json"
     },
     "runtime_manifest_url": {
       "title": "运行时下载 manifest",

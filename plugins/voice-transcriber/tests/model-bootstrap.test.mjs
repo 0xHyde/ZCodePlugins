@@ -80,3 +80,33 @@ test("model bootstrap rejects a downloaded file with the wrong declared size", a
     await fs.rm(dataRoot, { recursive: true, force: true });
   }
 });
+
+test("model bootstrap falls back across approved ModelScope and Hugging Face mirrors", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-model-bootstrap-mirrors-"));
+  const payload = Buffer.from("mirror model");
+  const checksum = crypto.createHash("sha256").update(payload).digest("hex");
+  const manifestUrl = "https://raw.githubusercontent.com/example/models/main/model-manifest.json";
+  const primary = "https://www.modelscope.cn/models/example/model/resolve/master/model.gguf";
+  const backup = "https://huggingface.co/example/model/resolve/main/model.gguf?download=true";
+  const manifest = {
+    version: "test-mirrors-1",
+    files: [{ name: "sense-voice-small-q8_0.gguf", url: primary, urls: [backup], sha256: checksum, size: payload.length }],
+  };
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(url);
+    if (url === manifestUrl) return { ok: true, status: 200, json: async () => manifest };
+    if (url === primary) return { ok: false, status: 503 };
+    return { ok: true, status: 200, body: Readable.toWeb(Readable.from([payload])) };
+  };
+
+  try {
+    const result = await ensureModels({ dataRoot, manifestUrl });
+    assert.deepEqual(result.downloaded, ["sense-voice-small-q8_0.gguf"]);
+    assert.deepEqual(requests, [manifestUrl, primary, backup]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
+});

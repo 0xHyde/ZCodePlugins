@@ -27,7 +27,7 @@ ZCode 插件市场 monorepo。插件放在 `plugins/`，跨插件文档放在 `d
 - Windows x64
 - macOS arm64
 
-运行时二进制通过 [runtime-manifest.json](https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json) 按需下载。模型权重不进入 Git 仓库和 runtime Release，由用户手动提供或通过独立的模型 manifest 下载。
+运行时二进制通过 [runtime-manifest.json](https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json) 按需下载。模型权重不进入 Git 仓库和 runtime Release；默认模型 manifest 从 GitHub 获取清单，模型文件优先从 ModelScope/Hugging Face 下载，并支持镜像回退。
 
 在 ZCode 中将本仓库作为 Marketplace 源，启用 `voice-transcriber` 即可。插件首次真正转写时才初始化缺失的运行时，不转写时不会常驻推理进程。
 
@@ -46,7 +46,7 @@ ZCode 插件市场 monorepo。插件放在 `plugins/`，跨插件文档放在 `d
 ```text
 ZCODE_SENSEVOICE_MODEL=/path/to/sense-voice-small-q8_0.gguf
 ZCODE_CAMPP_MODEL=/path/to/cam++.onnx
-ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/OWNER/REPO/releases/download/models-v0.1.0/model-manifest.json
+ZCODE_VOICE_MODEL_MANIFEST_URL=https://raw.githubusercontent.com/0xHyde/ZCodePlugins/main/model-manifest.json
 ```
 
 模型 manifest 只是一份带下载地址、文件大小和 SHA256 的清单，不包含模型本身。项目提供了示例和生成工具：
@@ -61,7 +61,7 @@ node tools/create-model-manifest.mjs \
   --output model-manifest.json
 ```
 
-模型来源和许可证确认前，不会在项目中伪造默认下载地址。
+当前默认模型清单：[model-manifest.json](model-manifest.json)。清单只记录官方模型源、文件大小和 SHA256，不包含模型文件本身。
 
 ## 本地开发
 
