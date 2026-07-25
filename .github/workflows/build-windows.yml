@@ -6,6 +6,7 @@ on:
     paths:
       - "plugins/voice-transcriber/native/**"
       - "plugins/voice-transcriber/scripts/**"
+      - "plugins/voice-transcriber/tests/**"
       - "tools/build-*.mjs"
       - "tools/build-ffmpeg.sh"
       - "package.json"
