@@ -52,11 +52,15 @@ async function addSegmentOutput(source) {
     ],
     [
       "  bool emit_ids = ids_mode || vocab.empty();   // fall back to ids if the gguf has no vocab\n\n  // NOTE:",
-      "  bool emit_ids = ids_mode || vocab.empty();   // fall back to ids if the gguf has no vocab\n  ggml_backend_t be=ggml_backend_cpu_init();\n  int nthreads=4;\n  if(const char* env=getenv(\"ZCODE_VOICE_THREADS\")){ int requested=atoi(env); if(requested>0 && requested<=64)nthreads=requested; }\n  ggml_backend_cpu_set_n_threads(be,nthreads);\n\n  // NOTE:",
+      "  bool emit_ids = ids_mode || vocab.empty();   // fall back to ids if the gguf has no vocab\n  ggml_backend_t be=ggml_backend_cpu_init();\n  int nthreads=4;\n  if(const char* env=getenv(\"ZCODE_VOICE_THREADS\")){ int requested=atoi(env); if(requested>0 && requested<=64)nthreads=requested; }\n  ggml_backend_cpu_set_n_threads(be,nthreads);\n  std::vector<uint8_t> ggml_ctx_buffer((size_t)256*1024*1024);\n\n  // NOTE:",
     ],
     [
       "    ggml_backend_t be=ggml_backend_cpu_init();\n    ggml_init_params cp=",
       "    ggml_init_params cp=",
+    ],
+    [
+      "    ggml_init_params cp={(size_t)1024*1024*1024,nullptr,true};",
+      "    // Reuse a bounded metadata arena for every VAD segment.\n    ggml_init_params cp={ggml_ctx_buffer.size(),ggml_ctx_buffer.data(),true};",
     ],
     [
       "    if(emit_ids){ for(int id:seg_ids) printf(\"%d \",id); }\n    else { std::string t=detok_sv(seg_ids,vocab,keep_tags); printf(\"%s\",t.c_str()); }",

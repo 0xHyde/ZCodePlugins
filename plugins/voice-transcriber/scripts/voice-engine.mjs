@@ -9,7 +9,7 @@ import { ensureModels } from "./model-bootstrap.mjs";
 import { ensureRuntime } from "./runtime-bootstrap.mjs";
 import { resolveRuntimeCommand } from "./runtime.mjs";
 import { parseSenseVoiceOutput } from "./sensevoice-parser.mjs";
-import { prepareAudio } from "./audio-prep.mjs";
+import { prepareAudio, splitAudio } from "./audio-prep.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataRoot = process.env.ZCODE_VOICE_DATA_DIR || path.join(os.homedir(), ".zcode", "voice-transcriber");
@@ -425,7 +425,11 @@ async function runCommand(command, args, options = {}) {
         const windowsHint = process.platform === "win32" && code === 3221226505
           ? "；Windows GGML 内存上下文初始化失败，已隔离 Electron/Node 环境变量，请检查 runtime 与模型路径"
           : "";
-        reject(fail(`${command} 运行失败 (code=${code}, signal=${signal})${windowsHint}${stderr ? `: ${stderr.trim()}` : ""}`, "backend_failed"));
+        const error = fail(`${command} 运行失败 (code=${code}, signal=${signal})${windowsHint}${stderr ? `: ${stderr.trim()}` : ""}`, "backend_failed");
+        error.nativeExitCode = code;
+        error.nativeSignal = signal;
+        error.nativeStderr = stderr;
+        reject(error);
       } else {
         resolve({ stdout, stderr });
       }
@@ -450,38 +454,75 @@ async function runSenseVoice(audioPath, options = {}, onStage = null) {
   const model = modelInfo.path;
   const binary = runtime.command;
   const vadInfo = await resolveModel("ZCODE_FSMN_VAD_MODEL", "fsmn-vad.gguf");
-  const args = ["-m", model, "-a", audioPath];
-  if (vadInfo.exists) args.push("--vad", vadInfo.path);
-  const result = await runCommand(binary, args);
-  const device = "cpu";
-  const stdout = result.stdout.trim();
-  const raw = `${result.stdout}\n${result.stderr}`.trim();
-  let parsed = null;
-  if (stdout.startsWith("{") || stdout.startsWith("[")) {
-    try { parsed = JSON.parse(stdout); } catch { parsed = null; }
-  }
-  const rawSegments = Array.isArray(parsed) ? parsed : parsed?.segments;
-  const segments = Array.isArray(rawSegments) ? rawSegments.map((segment, index) => ({
-    id: segment.id || `seg_${String(index + 1).padStart(4, "0")}`,
-    start: Number.isFinite(segment.start) ? segment.start : null,
-    end: Number.isFinite(segment.end) ? segment.end : null,
-    text: String(segment.text || "").trim(),
-    speaker: segment.speaker || "unknown",
-    confidence: Number.isFinite(segment.confidence) ? segment.confidence : null,
-  })).filter((segment) => segment.text) : null;
-  const parsedOutput = parsed
-    ? { text: String(parsed?.text || "").trim(), segments }
-    : parseSenseVoiceOutput(raw);
-  const text = String(parsedOutput.text || segments?.map((segment) => segment.text).join(" ") || raw).trim();
-  if (!text) throw fail("SenseVoice 没有返回文字结果。", "empty_transcription");
-  return {
-    text,
-    segments: parsedOutput.segments || segments,
-    backend: "qwen-audio-sensevoice",
-    model,
-    vadModel: vadInfo.exists ? vadInfo.path : null,
-    device,
+  const runSingle = async (inputPath, offsetSeconds = 0) => {
+    const args = ["-m", model, "-a", inputPath];
+    if (vadInfo.exists) args.push("--vad", vadInfo.path, "--vad-maxseg", "15000");
+    const result = await runCommand(binary, args);
+    const device = "cpu";
+    const stdout = result.stdout.trim();
+    const raw = `${result.stdout}\n${result.stderr}`.trim();
+    let parsed = null;
+    if (stdout.startsWith("{") || stdout.startsWith("[")) {
+      try { parsed = JSON.parse(stdout); } catch { parsed = null; }
+    }
+    const rawSegments = Array.isArray(parsed) ? parsed : parsed?.segments;
+    const segments = Array.isArray(rawSegments) ? rawSegments.map((segment, index) => ({
+      id: `seg_${String(index + 1).padStart(4, "0")}`,
+      start: Number.isFinite(segment.start) ? segment.start : null,
+      end: Number.isFinite(segment.end) ? segment.end : null,
+      text: String(segment.text || "").trim(),
+      speaker: segment.speaker || "unknown",
+      confidence: Number.isFinite(segment.confidence) ? segment.confidence : null,
+    })).filter((segment) => segment.text) : null;
+    const parsedOutput = parsed
+      ? { text: String(parsed?.text || "").trim(), segments }
+      : parseSenseVoiceOutput(raw);
+    const offsetSegments = Array.isArray(parsedOutput.segments)
+      ? parsedOutput.segments.map((segment, index) => ({
+        ...segment,
+        id: `seg_${String(index + 1).padStart(4, "0")}`,
+        start: Number.isFinite(segment.start) ? segment.start + offsetSeconds : null,
+        end: Number.isFinite(segment.end) ? segment.end + offsetSeconds : null,
+      }))
+      : null;
+    const text = String(parsedOutput.text || offsetSegments?.map((segment) => segment.text).join(" ") || raw).trim();
+    if (!text) throw fail("SenseVoice 没有返回文字结果。", "empty_transcription");
+    return {
+      text,
+      segments: offsetSegments,
+      backend: "qwen-audio-sensevoice",
+      model,
+      vadModel: vadInfo.exists ? vadInfo.path : null,
+      device,
+    };
   };
+
+  try {
+    return await runSingle(audioPath);
+  } catch (error) {
+    const isGgmlMemoryCrash = (error?.nativeExitCode === 3221226505 || error?.nativeExitCode === -1073740791)
+      && /GGML_ASSERT\(ctx\.mem_buffer != NULL\)|mem_buffer/i.test(error.nativeStderr || error.message || "");
+    if (!isGgmlMemoryCrash) throw error;
+
+    await onStage?.("transcribing", 36, "长录音触发本地内存保护，正在自动分块重试。", { fallback: "chunked" });
+    const split = await splitAudio({ audioPath, dataRoot, taskId: options.taskId, chunkSeconds: 300 });
+    try {
+      const results = [];
+      for (const [index, chunk] of split.chunks.entries()) {
+        const percent = 38 + Math.floor((index / split.chunks.length) * 28);
+        await onStage?.("transcribing", percent, `正在转写第 ${index + 1}/${split.chunks.length} 个音频分块。`, { fallback: "chunked", chunk: index + 1, chunks: split.chunks.length });
+        results.push(await runSingle(chunk.path, chunk.offset));
+      }
+      return {
+        ...results[0],
+        text: results.map((result) => result.text).filter(Boolean).join("\n"),
+        segments: results.flatMap((result) => result.segments || []),
+        warnings: [`长录音已自动分为 ${results.length} 个 5 分钟分块处理。`],
+      };
+    } finally {
+      await split.cleanup();
+    }
+  }
 }
 
 function makeSegments(text) {
@@ -590,7 +631,7 @@ async function transcribe(params) {
     ? { path: audioPath, converted: false, cleanup: async () => {} }
     : await prepareAudio({ audioPath, dataRoot, taskId });
   try {
-    const asr = await runSenseVoice(prepared.path, options, async (stage, percent, message, extra) => {
+    const asr = await runSenseVoice(prepared.path, { ...options, taskId }, async (stage, percent, message, extra) => {
       await updateTaskStatus(taskId, stage, { stage, percent, message }, extra);
     });
     const baseSegments = asr.segments?.length ? asr.segments : makeSegments(asr.text);
@@ -616,6 +657,7 @@ async function transcribe(params) {
       learningIds: [],
       warnings: [
         ...(asr.device === "cpu-fallback" ? ["Metal 初始化失败，已自动回退到 CPU。"] : []),
+        ...(asr.warnings || []),
         ...(camppRuntime.exists && (camppModel.exists || process.env.ZCODE_VOICE_MOCK === "1") ? [] : ["CAM++ adapter 或模型尚未配置，当前结果只包含转写文字，无法自动匹配注册说话人。"]),
         ...(prepared.converted ? ["录音已在本地临时转换为 16kHz 单声道 WAV，任务结束后已清理。"] : []),
       ],

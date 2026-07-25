@@ -39,27 +39,40 @@ async function isSenseVoiceWav(audioPath) {
   }
 }
 
-function runConverter(command, input, output) {
+async function readWavDuration(audioPath) {
+  const handle = await fs.open(audioPath, "r").catch(() => null);
+  if (!handle) return null;
+  try {
+    const header = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    if (bytesRead < 12 || header.toString("ascii", 0, 4) !== "RIFF" || header.toString("ascii", 8, 12) !== "WAVE") return null;
+    let offset = 12;
+    let byteRate = null;
+    let dataBytes = null;
+    while (offset + 8 <= bytesRead) {
+      const chunk = header.toString("ascii", offset, offset + 4);
+      const size = header.readUInt32LE(offset + 4);
+      if (chunk === "fmt " && offset + 8 + size <= bytesRead && size >= 16) byteRate = header.readUInt32LE(offset + 16);
+      if (chunk === "data") {
+        dataBytes = size;
+        break;
+      }
+      offset += 8 + size + (size % 2);
+    }
+    return byteRate && dataBytes ? dataBytes / byteRate : null;
+  } finally {
+    await handle.close();
+  }
+}
+
+function runProcess(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, [
-      "-nostdin",
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      input,
-      "-vn",
-      "-ac",
-      "1",
-      "-ar",
-      "16000",
-      "-c:a",
-      "pcm_s16le",
-      "-f",
-      "wav",
-      "-y",
-      output,
-    ], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(command, args, {
+      cwd: path.dirname(path.resolve(command)),
+      windowsHide: true,
+      shell: false,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-4000); });
     child.once("error", (error) => reject(fail(`音频转换器无法启动：${error.message}`, "audio_converter_not_found")));
@@ -68,6 +81,90 @@ function runConverter(command, input, output) {
       else resolve();
     });
   });
+}
+
+function runConverter(command, input, output) {
+  return runProcess(command, [
+    "-nostdin",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    input,
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-c:a",
+    "pcm_s16le",
+    "-f",
+    "wav",
+    "-y",
+    output,
+  ]);
+}
+
+export async function splitAudio({ audioPath, dataRoot, taskId, converter = process.env.ZCODE_AUDIO_CONVERTER, chunkSeconds = 300 } = {}) {
+  const runtime = await resolveRuntimeCommand({
+    pluginRoot,
+    dataRoot,
+    configured: converter,
+    defaultName: "ffmpeg",
+  });
+  if (!runtime.exists) throw fail("长录音需要本地 ffmpeg 分块，但找不到可用的音频转换器。", "audio_converter_not_found");
+
+  const directory = path.join(dataRoot || os.tmpdir(), "tmp-audio", `${taskId || "audio"}-${process.pid}-${Date.now()}-chunks`);
+  await fs.mkdir(directory, { recursive: true });
+  try {
+    const chunks = [];
+    const duration = await readWavDuration(audioPath);
+    if (!duration) throw fail("无法读取待分块 WAV 的时长。", "audio_split_failed");
+    const chunkCount = Math.max(1, Math.ceil(duration / Number(chunkSeconds)));
+    for (let index = 0; index < chunkCount; index += 1) {
+      const offset = index * Number(chunkSeconds);
+      const file = path.join(directory, `chunk-${String(index).padStart(3, "0")}.wav`);
+      await runProcess(runtime.command, [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        String(offset),
+        "-i",
+        audioPath,
+        "-t",
+        String(chunkSeconds),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        "-y",
+        file,
+      ]);
+      const stat = await fs.stat(file).catch(() => null);
+      if (!stat || stat.size <= 44 || !(await isSenseVoiceWav(file))) {
+        await fs.rm(file, { force: true });
+        break;
+      }
+      chunks.push({ path: file, offset });
+    }
+    if (!chunks.length) throw fail("ffmpeg 没有生成有效的长录音分块。", "audio_split_failed");
+    return {
+      chunks,
+      cleanup: async () => { await fs.rm(directory, { recursive: true, force: true }); },
+    };
+  } catch (error) {
+    await fs.rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function prepareAudio({ audioPath, dataRoot, taskId, converter = process.env.ZCODE_AUDIO_CONVERTER } = {}) {
