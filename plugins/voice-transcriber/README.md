@@ -19,6 +19,7 @@ ZCode 本地录音转写与说话人学习插件。
 - CAM++ JSONL adapter 协议、已确认片段注册、自动匹配和可回滚学习
 - CAM++ 原生 ONNX Runtime adapter 构建脚本，macOS arm64 已完成真实构建和端到端验证
 - Windows x64 原生 runtime 已由 GitHub Actions 成功编译、验证并打包
+- macOS arm64 构建流程已加入 GitHub Actions，发布时使用同一 runtime manifest
 - 可选的 GitHub Release runtime manifest；缺少平台二进制时按需下载并校验 SHA256
 - 可供 ZCode Agent 消费的 JSON/Markdown 转写产物、分页读取和本地搜索
 

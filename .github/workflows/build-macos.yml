@@ -1,0 +1,52 @@
+name: Build macOS voice runtime
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "plugins/voice-transcriber/native/**"
+      - "plugins/voice-transcriber/scripts/**"
+      - "tools/build-*.mjs"
+      - ".github/workflows/build-macos.yml"
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build SenseVoice.cpp runtime
+        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'main' }} --jobs 2
+
+      - name: Build CAM++ ONNX Runtime adapter
+        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2
+
+      - name: Run JavaScript tests and plugin validation
+        run: |
+          npm run test:voice-transcriber
+          npm run validate
+
+      - name: Verify macOS runtime files
+        run: |
+          test -x plugins/voice-transcriber/bin/darwin/arm64/sense-voice-main
+          test -x plugins/voice-transcriber/bin/darwin/arm64/campp-adapter
+          test -f plugins/voice-transcriber/bin/darwin/arm64/libonnxruntime.1.12.0.dylib
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}' \
+            | plugins/voice-transcriber/bin/darwin/arm64/campp-adapter --stdio
+
+      - name: Package macOS runtime
+        run: |
+          cd plugins/voice-transcriber/bin/darwin/arm64
+          zip -q -r "$GITHUB_WORKSPACE/voice-transcriber-darwin-arm64.zip" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-transcriber-darwin-arm64
+          path: voice-transcriber-darwin-arm64.zip
