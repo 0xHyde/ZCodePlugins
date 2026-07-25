@@ -41,7 +41,7 @@ test("audio preparation reports a missing converter for compressed audio", async
   const audioPath = path.join(dataRoot, "input.mp3");
   await fs.writeFile(audioPath, "not an actual mp3");
   await assert.rejects(
-    prepareAudio({ audioPath, dataRoot, taskId: "test", converter: "definitely-not-an-audio-converter" }),
+    prepareAudio({ audioPath, dataRoot, taskId: "test", converter: path.join(dataRoot, "missing-ffmpeg") }),
     (error) => error.code === "audio_converter_not_found",
   );
   await fs.rm(dataRoot, { recursive: true, force: true });
