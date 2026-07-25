@@ -30,6 +30,8 @@ jobs:
 
       - name: Run JavaScript tests and plugin validation
         run: |
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
           $testOutput = & npm run test:voice-transcriber 2>&1
           $testExitCode = $LASTEXITCODE
           $testOutput | ForEach-Object { Write-Host $_ }
