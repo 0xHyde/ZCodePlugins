@@ -29,18 +29,10 @@ jobs:
         run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2
 
       - name: Run JavaScript tests and plugin validation
+        shell: cmd
         run: |
-          $ErrorActionPreference = "Continue"
-          $PSNativeCommandUseErrorActionPreference = $false
-          $testOutput = & npm run test:voice-transcriber 2>&1
-          $testExitCode = $LASTEXITCODE
-          $testOutput | ForEach-Object { Write-Host $_ }
-          if ($testExitCode -ne 0) {
-            $diagnostic = (($testOutput | Out-String).Trim() -replace "%", "%25" -replace "`r", "%0D" -replace "`n", "%0A")
-            if ($diagnostic.Length -gt 3500) { $diagnostic = $diagnostic.Substring($diagnostic.Length - 3500) }
-            Write-Output "::error title=Windows JavaScript tests failed::$diagnostic"
-            exit $testExitCode
-          }
+          npm run test:voice-transcriber
+          if errorlevel 1 exit /b 1
           npm run validate
 
       - name: Verify Windows runtime files
