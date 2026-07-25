@@ -76,6 +76,7 @@ else
     --arch=x86_64
     --disable-pthreads
     --enable-w32threads
+    --extra-ldflags=-static
   )
 fi
 
