@@ -1,0 +1,11 @@
+{
+  "name": "zcode-plugins-workspace",
+  "private": true,
+  "scripts": {
+    "test:voice-transcriber": "node --test plugins/voice-transcriber/tests/mcp-server.test.mjs plugins/voice-transcriber/tests/model-bootstrap.test.mjs plugins/voice-transcriber/tests/runtime.test.mjs plugins/voice-transcriber/tests/sensevoice-parser.test.mjs plugins/voice-transcriber/tests/audio-prep.test.mjs",
+    "build:sensevoice": "node tools/build-sensevoice.mjs",
+    "build:campp": "node tools/build-campp.mjs",
+    "bench:voice-transcriber": "node tools/benchmark-voice-engine.mjs",
+    "validate": "node tools/validate-plugins.mjs"
+  }
+}

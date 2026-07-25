@@ -1,0 +1,10 @@
+{
+  "name": "voice-transcriber-zcode-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:campp": "node ../../tools/build-campp.mjs",
+    "test": "node --test tests/mcp-server.test.mjs tests/model-bootstrap.test.mjs tests/runtime.test.mjs tests/sensevoice-parser.test.mjs tests/audio-prep.test.mjs"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+.zcode/
+
+# Local model packs and runtime binaries
+plugins/*/models/*.gguf
+plugins/*/models/*.onnx
+plugins/*/bin/*/*
+!plugins/*/bin/**/README.md
+
+# Local voice data
+.voice-transcriber/

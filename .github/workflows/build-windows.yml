@@ -1,0 +1,52 @@
+name: Build Windows voice runtime
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "plugins/voice-transcriber/native/**"
+      - "plugins/voice-transcriber/scripts/**"
+      - "tools/build-*.mjs"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build SenseVoice.cpp runtime
+        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'main' }} --jobs 2
+
+      - name: Build CAM++ ONNX Runtime adapter
+        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2
+
+      - name: Run JavaScript tests and plugin validation
+        run: |
+          npm run test:voice-transcriber
+          npm run validate
+
+      - name: Verify Windows runtime files
+        run: |
+          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/sense-voice-main.exe")) { throw "SenseVoice runtime missing" }
+          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/campp-adapter.exe")) { throw "CAM++ adapter missing" }
+          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/onnxruntime.dll")) { throw "ONNX Runtime DLL missing" }
+          $request = '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}'
+          $response = $request | & "plugins/voice-transcriber/bin/win32/x64/campp-adapter.exe" --stdio
+          if (!$response) { throw "CAM++ adapter did not start" }
+
+      - name: Package Windows runtime
+        run: |
+          Compress-Archive -Path "plugins/voice-transcriber/bin/win32/x64/*" -DestinationPath "voice-transcriber-win32-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-transcriber-win32-x64
+          path: voice-transcriber-win32-x64.zip
