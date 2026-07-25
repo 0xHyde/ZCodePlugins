@@ -234,7 +234,15 @@ public:
         : env_(ORT_LOGGING_LEVEL_WARNING, "zcode-campp"), session_options_() {
         session_options_.SetIntraOpNumThreads(1);
         session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+#if defined(_WIN32)
+        // ONNX Runtime's Windows C++ API exposes the model-path overload as
+        // wchar_t*. Convert the UTF-8 path received from JSON without losing
+        // non-ASCII user/model directory names.
+        const auto native_model_path = std::filesystem::u8path(model_path).wstring();
+        session_ = std::make_unique<Ort::Session>(env_, native_model_path.c_str(), session_options_);
+#else
         session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), session_options_);
+#endif
         Ort::AllocatorWithDefaultOptions allocator;
         char *input_name = session_->GetInputName(0, allocator);
         char *output_name = session_->GetOutputName(0, allocator);
