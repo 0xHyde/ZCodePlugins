@@ -22,10 +22,19 @@ function option(name, fallback = null) {
 
 async function run(command, args, cwd = root) {
   console.log(`> ${command} ${args.join(" ")}`);
-  const result = await exec(command, args, { cwd, maxBuffer: 64 * 1024 * 1024 });
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  return result;
+  try {
+    const result = await exec(command, args, { cwd, maxBuffer: 64 * 1024 * 1024 });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    return result;
+  } catch (error) {
+    // execFile rejects before the normal output forwarding below. Preserve
+    // compiler/linker diagnostics in CI logs so a failed native build is
+    // actionable instead of appearing as a bare exit code 1.
+    if (error.stdout) process.stdout.write(error.stdout);
+    if (error.stderr) process.stderr.write(error.stderr);
+    throw error;
+  }
 }
 
 async function findFile(directory, names) {
@@ -74,6 +83,22 @@ async function download(url, target) {
   await pipeline(Readable.fromWeb(response.body), createWriteStream(target, { flags: "wx" }));
 }
 
+function powershellLiteral(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+async function extractArchive(archive, destination) {
+  if (process.platform === "win32" && archive.toLowerCase().endsWith(".zip")) {
+    const command = [
+      "$ErrorActionPreference = 'Stop'",
+      `Expand-Archive -LiteralPath ${powershellLiteral(archive)} -DestinationPath ${powershellLiteral(destination)} -Force`,
+    ].join("; ");
+    await run("powershell", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]);
+    return;
+  }
+  await run("tar", ["-xf", archive, "-C", destination]);
+}
+
 const packageInfo = platformPackage();
 const output = path.resolve(option("output", path.join(pluginRoot, "bin", process.platform, process.arch)));
 const ref = option("ref", process.env.ZCODE_3D_SPEAKER_REF || "main");
@@ -93,18 +118,24 @@ try {
   }
   await fs.mkdir(ortRoot, { recursive: true });
   await download(`https://github.com/microsoft/onnxruntime/releases/download/v${ortVersion}/${packageInfo.name}`, ortArchive);
-  await run("tar", ["-xf", ortArchive, "-C", ortRoot]);
+  await extractArchive(ortArchive, ortRoot);
   const extracted = await findDirectory(ortRoot, "include");
   if (!extracted) throw new Error("ONNX Runtime 压缩包解压后缺少 include 目录。");
   const packageRoot = path.dirname(extracted);
-  await run("cmake", [
+  const cmakeConfigureArgs = [
     "-S", path.join(pluginRoot, "native"),
     "-B", build,
     "-DCMAKE_BUILD_TYPE=Release",
     `-DSPEAKERLAB_ROOT=${path.join(source, "runtime", "onnxruntime")}`,
     `-DONNXRUNTIME_ROOT=${packageRoot}`,
+  ];
+  if (process.platform === "win32") cmakeConfigureArgs.push("-A", "x64");
+  await run("cmake", cmakeConfigureArgs);
+  await run("cmake", [
+    "--build", build,
+    "--config", "Release",
+    "--parallel", String(Math.max(1, Number(option("jobs", process.env.ZCODE_BUILD_JOBS || Math.min(4, os.cpus().length || 1))))),
   ]);
-  await run("cmake", ["--build", build, "--config", "Release", "-j", String(Math.max(1, Number(option("jobs", process.env.ZCODE_BUILD_JOBS || Math.min(4, os.cpus().length || 1)))))]);
 
   const binaryName = process.platform === "win32" ? "campp-adapter.exe" : "campp-adapter";
   const binary = await findFile(build, binaryName);
