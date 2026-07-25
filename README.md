@@ -21,7 +21,7 @@ tools/                  工作区级验证和基准工具
 /Users/hyde/Documents/ZCodePlugins
 ```
 
-发布版会在插件配置中预置项目自己的 GitHub Release manifest URL，第一次真正转写时自动下载模型到用户数据目录；当前仓库尚未绑定远端仓库，因此开发版需要填写 manifest URL 或手动指定模型路径。需要说话人分离时同样由 manifest 下载 CAM++ ONNX。当前仓库不提交模型和 native binary。
+本仓库已发布到 [0xHyde/ZCodePlugins](https://github.com/0xHyde/ZCodePlugins)，整个仓库作为 ZCode 插件市场源；新增插件只需放入 `plugins/` 并更新 `marketplace.json`。发布版可以在插件配置中预置项目自己的 GitHub Release manifest URL，第一次真正转写时自动下载模型到用户数据目录；当前开发版仍可填写 manifest URL 或手动指定模型路径。需要说话人分离时同样由 manifest 下载 CAM++ ONNX。仓库不提交模型和 native binary。
 
 ## 测试
 
