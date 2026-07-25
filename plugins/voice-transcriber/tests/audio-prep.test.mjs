@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { prepareAudio } from "../scripts/audio-prep.mjs";
+import { fileURLToPath } from "node:url";
+import { prepareAudio, splitAudio } from "../scripts/audio-prep.mjs";
 
-function makeWav() {
-  const samples = Buffer.alloc(320);
+function makeWav(durationSeconds = 0.01) {
+  const samples = Buffer.alloc(Math.round(16000 * durationSeconds) * 2);
   const buffer = Buffer.alloc(44 + samples.length);
   buffer.write("RIFF", 0);
   buffer.writeUInt32LE(buffer.length - 8, 4);
@@ -45,4 +46,26 @@ test("audio preparation reports a missing converter for compressed audio", async
     (error) => error.code === "audio_converter_not_found",
   );
   await fs.rm(dataRoot, { recursive: true, force: true });
+});
+
+test("long-audio fallback splits a WAV into bounded SenseVoice chunks", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-audio-split-"));
+  const audioPath = path.join(dataRoot, "input.wav");
+  const converter = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "bin",
+    process.platform,
+    process.arch,
+    process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
+  );
+  await fs.writeFile(audioPath, makeWav(2.2));
+  try {
+    const split = await splitAudio({ audioPath, dataRoot, taskId: "test", converter, chunkSeconds: 1 });
+    assert.equal(split.chunks.length, 3);
+    assert.deepEqual(split.chunks.map((chunk) => chunk.offset), [0, 1, 2]);
+    await split.cleanup();
+  } finally {
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
 });
