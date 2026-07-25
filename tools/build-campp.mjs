@@ -33,7 +33,9 @@ async function run(command, args, cwd = root) {
     // actionable instead of appearing as a bare exit code 1.
     if (error.stdout) process.stdout.write(error.stdout);
     if (error.stderr) process.stderr.write(error.stderr);
-    const diagnostic = String(error.stderr || error.message || "native command failed")
+    const diagnostic = [error.stdout, error.stderr, error.message]
+      .filter(Boolean)
+      .join("\n")
       .replaceAll("%", "%25")
       .replaceAll("\r", "%0D")
       .replaceAll("\n", "%0A")
