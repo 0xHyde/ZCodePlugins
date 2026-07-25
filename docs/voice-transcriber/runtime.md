@@ -1,36 +1,36 @@
 # Runtime manifest
 
-运行时 manifest 用于让插件在安装后按需下载平台二进制。它不包含模型，也不上传录音。
+这是旧版运行时 manifest 的格式说明。`v0.3.0` 起，macOS arm64 和 Windows x64 的 runtime 已随插件包发布，正常安装不需要下载 runtime manifest；本文件只用于旧版本迁移、离线诊断或未来扩展其他平台。它不包含模型，也不上传录音。
 
 最小格式：
 
 ```json
 {
-  "version": "v0.2.0",
+  "version": "v0.3.0",
   "platforms": {
     "win32-x64": {
       "files": [
         {
           "name": "llama-funasr-sensevoice.exe",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-llama-funasr-sensevoice.exe",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.3.0/win32-x64-llama-funasr-sensevoice.exe",
           "sha256": "...",
           "required": true
         },
         {
           "name": "campp-adapter.exe",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-campp-adapter.exe",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.3.0/win32-x64-campp-adapter.exe",
           "sha256": "...",
           "required": true
         },
         {
           "name": "onnxruntime.dll",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-onnxruntime.dll",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.3.0/win32-x64-onnxruntime.dll",
           "sha256": "...",
           "required": true
         },
         {
           "name": "ffmpeg.exe",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-ffmpeg.exe",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.3.0/win32-x64-ffmpeg.exe",
           "sha256": "...",
           "required": true
         }

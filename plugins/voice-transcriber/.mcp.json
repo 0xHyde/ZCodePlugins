@@ -3,18 +3,20 @@
     "voice-transcriber": {
       "type": "stdio",
       "command": "node",
-      "args": ["${ZCODE_PLUGIN_ROOT}/scripts/mcp-server.mjs"],
-      "cwd": "${ZCODE_PLUGIN_ROOT}",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"],
+      "cwd": "${CLAUDE_PROJECT_DIR}",
       "enabled": true,
+      "timeoutMs": 60000,
       "env": {
+        "ZCODE_VOICE_PLUGIN_ROOT": "${CLAUDE_PLUGIN_ROOT}",
+        "ZCODE_VOICE_DATA_DIR": "${CLAUDE_PLUGIN_DATA}",
         "ZCODE_SENSEVOICE_MODEL": "${user_config.sensevoice_model}",
         "ZCODE_FSMN_VAD_MODEL": "${user_config.fsmn_vad_model}",
         "ZCODE_CAMPP_MODEL": "${user_config.campp_model}",
         "ZCODE_SENSEVOICE_BINARY": "${user_config.sensevoice_binary}",
         "ZCODE_AUDIO_CONVERTER": "${user_config.audio_converter}",
         "ZCODE_CAMPP_COMMAND": "${user_config.campp_command}",
-        "ZCODE_VOICE_MODEL_MANIFEST_URL": "${user_config.model_manifest_url}",
-        "ZCODE_VOICE_RUNTIME_MANIFEST_URL": "${user_config.runtime_manifest_url}"
+        "ZCODE_VOICE_MODEL_MANIFEST_URL": "${user_config.model_manifest_url}"
       }
     }
   }

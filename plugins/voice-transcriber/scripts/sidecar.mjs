@@ -14,7 +14,8 @@ function parseArgs() {
 }
 
 export class SidecarClient {
-  constructor() {
+  constructor({ packageRoot: configuredRoot } = {}) {
+    this.pluginRoot = configuredRoot || pluginRoot;
     this.child = null;
     this.pending = new Map();
     this.nextId = 1;
@@ -28,9 +29,9 @@ export class SidecarClient {
     const args = parseArgs();
     const engineArgs = customCommand
       ? ["--stdio", ...args]
-      : [path.join(pluginRoot, "scripts", "voice-engine.mjs"), "--stdio", ...args];
+      : [path.join(this.pluginRoot, "scripts", "voice-engine.mjs"), "--stdio", ...args];
     this.child = spawn(command, engineArgs, {
-      cwd: pluginRoot,
+      cwd: this.pluginRoot,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -84,8 +85,11 @@ export class SidecarClient {
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
-    if (message.error) pending.reject(new Error(message.error.message || "voice-engine error"));
-    else pending.resolve(message.result);
+    if (message.error) {
+      const error = new Error(message.error.message || "voice-engine error");
+      error.code = message.error.code || "voice_engine_error";
+      pending.reject(error);
+    } else pending.resolve(message.result);
   }
 
   #failAll(error) {

@@ -16,14 +16,13 @@
 https://github.com/0xHyde/ZCodePlugins
 ```
 
-安装并启用 `voice-transcriber`。插件安装包不携带模型；第一次真正转写时会自动完成准备：
+安装并启用 `voice-transcriber`。插件安装包包含 macOS ARM64 和 Windows x64 运行时，但不携带模型；第一次真正转写时会自动完成准备：
 
-1. 从 GitHub Release 下载当前平台的 SenseVoice、CAM++、ONNX Runtime 和 ffmpeg；
-2. 从模型 manifest 获取下载地址，优先从 ModelScope 下载官方模型，失败时回退 Hugging Face；
-3. 校验文件大小和 SHA256 后保存到用户目录；
-4. 后续离线复用，不重复下载。
+1. 从模型 manifest 获取下载地址，优先从 ModelScope 下载官方模型，失败时回退 Hugging Face；
+2. 校验文件大小和 SHA256 后保存到 ZCode 插件数据目录；
+3. 后续离线复用，不重复下载。
 
-正式版本：[v0.2.0](https://github.com/0xHyde/ZCodePlugins/releases/tag/v0.2.0)
+当前重构版本：v0.3.0（待发布）
 
 ## voice-transcriber
 
@@ -33,16 +32,17 @@ https://github.com/0xHyde/ZCodePlugins
 - FSMN-VAD 自动分段并保留时间戳；
 - CAM++ 区分说话人并匹配本地声纹档案；
 - 用户修正说话人后自动注册确认片段，支持回滚；
-- 完整全文保存在本地，长内容向 ZCode 返回轻量索引和预览；
+- MCP 使用异步任务，长录音不会阻塞一次工具调用；
+- 完整全文保存在本地，ZCode 通过分页接口读取，不会丢失全文；
 - 不上传录音，不内置摘要大模型，纪要和后续分析由 ZCode 完成；
 - 转写结束后释放 SenseVoice，CAM++ 空闲 30 秒后退出。
 
-首次使用大约下载 284 MB 模型。默认数据目录：
+首次使用大约下载 284 MB 模型。模型只在首次转写时下载，默认数据目录由 ZCode 的 `${ZCODE_PLUGIN_DATA}` 提供：
 
 ```text
-~/.zcode/voice-transcriber/
+${ZCODE_PLUGIN_DATA}/
 ├── models/       # SenseVoice、FSMN-VAD、CAM++
-├── runtimes/     # 按平台下载的本地运行时
+├── runtimes/     # 旧版本运行时缓存（v0.3.0 通常不使用）
 ├── artifacts/    # 完整转写文件
 ├── tasks/        # 任务索引
 ├── learning/     # 可回滚的学习记录
@@ -51,11 +51,12 @@ https://github.com/0xHyde/ZCodePlugins
 
 ## 开发
 
-要求 Node.js 22，以及 Git、CMake 和平台 C/C++ 工具链。
+开发构建需要 Node.js 22、npm，以及 Git、CMake 和平台 C/C++ 工具链。普通用户不需要单独安装 Node.js。
 
 ```bash
 npm run test:voice-transcriber
 npm run validate
+npm run build:voice-plugin
 npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9
 npm run build:campp -- --ref 065629c313eaf1a01c65c640c46d77e61e9607b4
 ```

@@ -6,6 +6,7 @@
     "build:sensevoice": "node tools/build-sensevoice.mjs",
     "build:campp": "node tools/build-campp.mjs",
     "build:ffmpeg": "bash tools/build-ffmpeg.sh",
+    "build:voice-plugin": "node tools/build-voice-plugin.mjs",
     "bench:voice-transcriber": "node tools/benchmark-voice-engine.mjs",
     "validate": "node tools/validate-plugins.mjs"
   }

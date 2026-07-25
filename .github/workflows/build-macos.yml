@@ -7,6 +7,12 @@ on:
       - "plugins/voice-transcriber/native/**"
       - "plugins/voice-transcriber/scripts/**"
       - "plugins/voice-transcriber/tests/**"
+      - "plugins/voice-transcriber/.mcp.json"
+      - "plugins/voice-transcriber/.zcode-plugin/**"
+      - "plugins/voice-transcriber/skills/**"
+      - "plugins/voice-transcriber/package.json"
+      - "plugins/voice-transcriber/package-lock.json"
+      - "tools/build-voice-plugin.mjs"
       - "tools/build-*.mjs"
       - "tools/build-ffmpeg.sh"
       - "package.json"
@@ -26,6 +32,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install plugin build dependencies
+        run: npm install --prefix plugins/voice-transcriber --ignore-scripts
+
+      - name: Build bundled MCP server
+        run: npm run build:voice-plugin
 
       - name: Build minimal redistributable ffmpeg
         run: npm run build:ffmpeg

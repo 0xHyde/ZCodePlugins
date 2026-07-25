@@ -19,6 +19,8 @@ const learningRoot = path.join(dataRoot, "learning");
 const artifactRoot = path.join(dataRoot, "artifacts");
 const modelRoot = path.join(dataRoot, "models");
 let runtimeBootstrapPromise = null;
+const activeTasks = new Map();
+let stateInitialization = null;
 
 async function ensureDirs() {
   await Promise.all([
@@ -28,6 +30,38 @@ async function ensureDirs() {
     fs.mkdir(artifactRoot, { recursive: true }),
     fs.mkdir(modelRoot, { recursive: true }),
   ]);
+}
+
+async function updateTaskStatus(taskId, status, progress = {}, extra = {}) {
+  const task = await readJson(taskFile(taskId), null);
+  if (!task) return null;
+  task.status = status;
+  task.progress = { ...(task.progress || {}), ...progress };
+  Object.assign(task, extra);
+  task.updatedAt = new Date().toISOString();
+  await writeJson(taskFile(taskId), task);
+  return task;
+}
+
+async function initializeState() {
+  if (!stateInitialization) {
+    stateInitialization = (async () => {
+      await ensureDirs();
+      const entries = await fs.readdir(taskRoot, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        const file = path.join(taskRoot, entry.name);
+        const task = await readJson(file, null);
+        if (task && ["queued", "preparing_models", "preparing_audio", "transcribing", "identifying_speakers"].includes(task.status)) {
+          task.status = "interrupted";
+          task.progress = { ...(task.progress || {}), stage: "interrupted", message: "上一次 ZCode 会话中断，可重新提交此录音。" };
+          task.updatedAt = new Date().toISOString();
+          await writeJson(file, task);
+        }
+      }
+    })();
+  }
+  return stateInitialization;
 }
 
 async function readJson(file, fallback = null) {
@@ -376,14 +410,16 @@ async function runCommand(command, args, options = {}) {
   });
 }
 
-async function runSenseVoice(audioPath, options = {}) {
+async function runSenseVoice(audioPath, options = {}, onStage = null) {
   if (process.env.ZCODE_VOICE_MOCK === "1") {
     return { text: process.env.ZCODE_VOICE_MOCK_TEXT || "这是本地语音引擎的测试转写结果。", backend: "mock", model: "mock" };
   }
 
   const runtime = await resolveSenseVoiceRuntime({ bootstrap: true });
   requireSenseVoiceRuntime(runtime);
-  await ensureModels({ dataRoot });
+  await onStage?.("preparing_models", 10, "正在准备本地模型；首次使用可能需要下载。", { modelReady: false });
+  const modelBootstrap = await ensureModels({ dataRoot });
+  await onStage?.("transcribing", 35, "模型已准备，正在进行本地转写。", { modelReady: modelBootstrap.ready });
   const modelInfo = await resolveModel("ZCODE_SENSEVOICE_MODEL", "sense-voice-small-q8_0.gguf");
   if (!modelInfo.exists) {
     throw fail(`找不到 SenseVoice GGUF 模型：${modelInfo.path}。请将模型放入本地模型目录或配置 ZCODE_SENSEVOICE_MODEL。`, "sensevoice_not_configured");
@@ -512,31 +548,36 @@ async function transcribe(params) {
   if (!stat?.isFile()) throw fail(`找不到音频文件：${audioPath}`, "audio_not_found");
 
   await ensureDirs();
-  const camppRuntime = await configureCamppRuntime();
-  const camppModel = await resolveModel("ZCODE_CAMPP_MODEL", "cam++.onnx");
   const options = {
     language: params.language || "auto",
     outputFormat: params.outputFormat || "markdown",
     speakerProfile: params.speakerProfile !== false,
   };
   const profiles = options.speakerProfile ? await getProfiles() : { version: 1, profiles: [] };
-  const taskId = makeTaskId(audioPath, stat, options, profileFingerprint(profiles));
+  const taskId = params.taskId || makeTaskId(audioPath, stat, options, profileFingerprint(profiles));
   const cached = await readJson(taskFile(taskId));
-  if (cached) return { ...cached, cacheHit: true };
+  if (cached?.status === "completed" && !params.taskId) return { ...cached, cacheHit: true };
 
+  await updateTaskStatus(taskId, "preparing_models", { stage: "preparing_models", percent: 1, message: "正在准备本地运行时和模型。" });
+  const camppRuntime = await configureCamppRuntime();
+  const camppModel = await resolveModel("ZCODE_CAMPP_MODEL", "cam++.onnx");
   if (process.env.ZCODE_VOICE_MOCK !== "1") requireSenseVoiceRuntime(await resolveSenseVoiceRuntime());
+  await updateTaskStatus(taskId, "preparing_audio", { stage: "preparing_audio", percent: 5, message: "正在检查和转换音频。" });
   const prepared = process.env.ZCODE_VOICE_MOCK === "1"
     ? { path: audioPath, converted: false, cleanup: async () => {} }
     : await prepareAudio({ audioPath, dataRoot, taskId });
   try {
-    const asr = await runSenseVoice(prepared.path, options);
+    const asr = await runSenseVoice(prepared.path, options, async (stage, percent, message, extra) => {
+      await updateTaskStatus(taskId, stage, { stage, percent, message }, extra);
+    });
     const baseSegments = asr.segments?.length ? asr.segments : makeSegments(asr.text);
+    await updateTaskStatus(taskId, "identifying_speakers", { stage: "identifying_speakers", percent: 70, message: "正在区分和匹配说话人。" });
     const diarizedSegments = await diarize(prepared.path, baseSegments);
     const segments = await matchKnownSpeakers(prepared.path, diarizedSegments, options.speakerProfile);
     const task = {
       taskId,
       status: "completed",
-      createdAt: new Date().toISOString(),
+      createdAt: cached?.createdAt || new Date().toISOString(),
       audioPath,
       audio: { size: stat.size, mtimeMs: stat.mtimeMs },
       options,
@@ -547,6 +588,7 @@ async function transcribe(params) {
       },
       text: asr.text,
       segments,
+      progress: { stage: "completed", percent: 100, message: "本地转写已完成。" },
       corrections: [],
       learningIds: [],
       warnings: [
@@ -562,6 +604,74 @@ async function transcribe(params) {
   } finally {
     await prepared.cleanup();
   }
+}
+
+function taskOptions(params) {
+  return {
+    language: params?.language || "auto",
+    outputFormat: params?.outputFormat || "markdown",
+    speakerProfile: params?.speakerProfile !== false,
+  };
+}
+
+async function startTranscription(params) {
+  const audioPath = params?.audioPath;
+  if (!audioPath || !path.isAbsolute(audioPath)) throw fail("audioPath 必须是绝对路径。", "invalid_audio_path");
+  const stat = await fs.stat(audioPath).catch(() => null);
+  if (!stat?.isFile()) throw fail(`找不到音频文件：${audioPath}`, "audio_not_found");
+  const options = taskOptions(params);
+  const profiles = options.speakerProfile ? await getProfiles() : { version: 1, profiles: [] };
+  const taskId = makeTaskId(audioPath, stat, options, profileFingerprint(profiles));
+  const existing = await readJson(taskFile(taskId), null);
+  if (existing?.status === "completed") return { ...existing, cacheHit: true };
+  if (activeTasks.has(taskId)) return existing || { taskId, status: "queued" };
+
+  const task = {
+    taskId,
+    status: "queued",
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    audioPath,
+    audio: { size: stat.size, mtimeMs: stat.mtimeMs },
+    options,
+    progress: { stage: "queued", percent: 0, message: "任务已创建，等待本地引擎启动。" },
+    warnings: [],
+  };
+  await writeJson(taskFile(taskId), task);
+  const job = (async () => {
+    try {
+      await transcribe({ ...params, taskId });
+    } catch (error) {
+      await updateTaskStatus(taskId, "failed", {
+        stage: "failed",
+        percent: 100,
+        message: error.message,
+      }, {
+        error: { code: error.code || "transcription_failed", message: error.message },
+      });
+    } finally {
+      activeTasks.delete(taskId);
+    }
+  })();
+  activeTasks.set(taskId, job);
+  return task;
+}
+
+async function transcriptionStatus(params) {
+  const task = await readJson(taskFile(params?.taskId));
+  if (!task) throw fail(`找不到任务：${params?.taskId}`, "task_not_found");
+  return {
+    taskId: task.taskId,
+    status: task.status,
+    audio: task.audio,
+    progress: task.progress || { stage: task.status, percent: 0 },
+    error: task.error || null,
+    artifacts: task.artifacts || null,
+    segmentCount: task.segments?.length || 0,
+    totalCharacters: task.text?.length || 0,
+    preview: task.text ? task.text.slice(0, 1200) : "",
+    warnings: task.warnings || [],
+  };
 }
 
 function makePersonId(name) {
@@ -724,7 +834,11 @@ async function searchTranscript(params) {
 }
 
 async function dispatch(method, params) {
+  await initializeState();
   if (method === "health") return runtimeStatus();
+  if (method === "start_transcription") return startTranscription(params);
+  if (method === "get_transcription_status") return transcriptionStatus(params);
+  if (method === "read_transcript") return getTask(params);
   if (method === "transcribe") return transcribe(params);
   if (method === "correct_speaker") return correctSpeaker(params);
   if (method === "enroll_from_correction") return enrollFromCorrection(params);

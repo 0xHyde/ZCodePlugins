@@ -7,15 +7,19 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const pluginRoot = fileURLToPath(new URL("..", import.meta.url));
+
 function startServer(extraEnv = {}) {
   const dataRoot = extraEnv.ZCODE_VOICE_DATA_DIR || path.join(os.tmpdir(), `voice-transcriber-test-${process.pid}-${Math.random().toString(16).slice(2)}`);
   const child = spawn(process.execPath, ["scripts/mcp-server.mjs"], {
-    cwd: new URL("..", import.meta.url),
+    cwd: pluginRoot,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, ZCODE_VOICE_DATA_DIR: dataRoot, ZCODE_VOICE_MOCK: "1", ...extraEnv },
   });
   const lines = readline.createInterface({ input: child.stdout });
   const pending = new Map();
+  const stderr = [];
+  child.stderr.on("data", (chunk) => stderr.push(chunk.toString()));
   lines.on("line", (line) => {
     const message = JSON.parse(line);
     const item = pending.get(message.id);
@@ -24,66 +28,81 @@ function startServer(extraEnv = {}) {
       item(message);
     }
   });
+  let nextId = 1;
   return {
     child,
     dataRoot,
+    stderr,
+    async initialize() {
+      await this.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    },
     request(method, params = {}) {
-      const id = Math.floor(Math.random() * 1e9);
+      const id = nextId++;
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-      return new Promise((resolve) => pending.set(id, resolve));
+      return new Promise((resolve) => {
+        pending.set(id, resolve);
+      });
+    },
+    async call(name, args = {}) {
+      const response = await this.request("tools/call", { name, arguments: args });
+      const value = response.result?.structuredContent;
+      if (response.result?.isError) throw Object.assign(new Error(value?.error?.message || "tool failed"), value?.error || {});
+      return value;
+    },
+    async close() {
+      child.kill();
+      await fs.rm(dataRoot, { recursive: true, force: true });
     },
   };
 }
 
-test("ZCode MCP server exposes the local voice tools", async () => {
+async function waitFor(server, taskId) {
+  for (let index = 0; index < 80; index += 1) {
+    const status = await server.call("get_transcription_status", { taskId });
+    if (status.status === "completed" || status.status === "failed") return status;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("task did not finish in test window");
+}
+
+test("ZCode MCP server exposes the asynchronous local voice workflow", async () => {
   const server = startServer();
-  const initialized = await server.request("initialize", { protocolVersion: "2024-11-05" });
-  assert.equal(initialized.result.serverInfo.version, "0.2.0");
-  const response = await server.request("tools/list");
-  const names = response.result.tools.map((tool) => tool.name);
-  assert.deepEqual(names, ["transcribe_audio"]);
-  server.child.kill();
-  await fs.rm(server.dataRoot, { recursive: true, force: true });
+  try {
+    await server.initialize();
+    const response = await server.request("tools/list");
+    assert.deepEqual(response.result.tools.map((tool) => tool.name), [
+      "start_transcription",
+      "get_transcription_status",
+      "read_transcript",
+      "correct_speaker",
+      "list_speakers",
+      "rollback_speaker_learning",
+      "search_transcript",
+    ]);
+  } finally {
+    await server.close();
+  }
 });
 
-test("local engine reports health and caches a mock transcription", async () => {
+test("async mock transcription creates a task and reads the completed transcript", async () => {
   const server = startServer();
-  const audioPath = path.join(os.tmpdir(), `voice-transcriber-${process.pid}.wav`);
+  const audioPath = path.join(server.dataRoot, "sample.wav");
+  await fs.mkdir(server.dataRoot, { recursive: true });
   await fs.writeFile(audioPath, "test audio");
-
-  const health = await server.request("tools/call", { name: "transcribe_audio", arguments: { operation: "status" } });
-  assert.equal(health.result.structuredContent.status, "ok");
-
-  const first = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { audioPath, outputFormat: "json" },
-  });
-  const firstTask = first.result.structuredContent;
-  assert.match(firstTask.taskId, /^task_/);
-  assert.equal(firstTask.backend.asr, "mock");
-  assert.match(firstTask.artifacts.json, /transcript\.json$/);
-
-  const second = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { audioPath, outputFormat: "json" },
-  });
-  assert.equal(second.result.structuredContent.cacheHit, true);
-
-  const task = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { operation: "read", taskId: firstTask.taskId, includeText: true, limit: 1 },
-  });
-  assert.equal(task.result.structuredContent.segments.length, 1);
-  assert.match(task.result.structuredContent.text, /测试转写结果/);
-
-  const search = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { operation: "search", taskId: firstTask.taskId, query: "测试转写" },
-  });
-  assert.equal(search.result.structuredContent.totalMatches, 1);
-
-  server.child.kill();
-  await fs.rm(audioPath, { force: true });
+  try {
+    await server.initialize();
+    const started = await server.call("start_transcription", { audioPath, outputFormat: "json" });
+    assert.match(started.taskId, /^task_/);
+    assert.ok(["queued", "preparing_audio", "completed"].includes(started.status));
+    const status = await waitFor(server, started.taskId);
+    assert.equal(status.status, "completed");
+    const transcript = await server.call("read_transcript", { taskId: started.taskId, includeText: true });
+    assert.match(transcript.text, /本地语音引擎/);
+    assert.equal(transcript.totalSegments, 1);
+  } finally {
+    await server.close();
+  }
 });
 
 test("corrected meeting segments enroll and auto-match on a later recording", async () => {
@@ -98,68 +117,40 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
     ZCODE_CAMPP_COMMAND: process.execPath,
     ZCODE_CAMPP_ARGS: JSON.stringify([adapter]),
   });
-
-  const first = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { audioPath: audioOne, outputFormat: "json" },
-  });
-  const firstTask = first.result.structuredContent;
-  assert.equal(firstTask.segments[0].speaker, "cluster_0");
-
-  const correction = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: {
-      operation: "correct_speaker",
-      taskId: firstTask.taskId,
-      segmentIds: [firstTask.segments[0].id],
+  try {
+    await server.initialize();
+    const first = await server.call("start_transcription", { audioPath: audioOne });
+    await waitFor(server, first.taskId);
+    const firstTranscript = await server.call("read_transcript", { taskId: first.taskId, includeText: true });
+    const correction = await server.call("correct_speaker", {
+      taskId: first.taskId,
+      segmentIds: [firstTranscript.segments[0].id],
       personName: "张老师",
-    },
-  });
-  assert.equal(correction.result.structuredContent.correction.personName, "张老师");
-  assert.equal(correction.result.structuredContent.learning.applied, true);
-  const learningId = correction.result.structuredContent.learning.learningId;
-  assert.match(learningId, /^learn_/);
-
-  const second = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { audioPath: audioTwo, outputFormat: "json" },
-  });
-  const secondTask = second.result.structuredContent;
-  assert.equal(secondTask.segments[0].speaker, "张老师");
-  assert.equal(secondTask.segments[0].speakerMatch, "known");
-
-  const rollback = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { operation: "rollback", learningId },
-  });
-  assert.deepEqual(rollback.result.structuredContent.profiles.profiles, []);
-
-  server.child.kill();
-  await fs.rm(dataRoot, { recursive: true, force: true });
+    });
+    assert.equal(correction.correction.personName, "张老师");
+    assert.equal(correction.learning.applied, true);
+    const second = await server.call("start_transcription", { audioPath: audioTwo });
+    await waitFor(server, second.taskId);
+    const secondTranscript = await server.call("read_transcript", { taskId: second.taskId, includeText: true });
+    assert.equal(secondTranscript.segments[0].speaker, "张老师");
+  } finally {
+    await server.close();
+  }
 });
 
-test("long transcriptions keep the full local artifact but compact the MCP response", async () => {
+test("long transcript remains local and can be read as a page", async () => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-long-"));
   const audioPath = path.join(dataRoot, "long.wav");
   await fs.writeFile(audioPath, "long audio");
-  const server = startServer({
-    ZCODE_VOICE_DATA_DIR: dataRoot,
-    ZCODE_VOICE_MOCK_TEXT: "长".repeat(80001),
-  });
-
-  const response = await server.request("tools/call", {
-    name: "transcribe_audio",
-    arguments: { audioPath, outputFormat: "json" },
-  });
-  const task = response.result.structuredContent;
-  assert.equal(task.textTruncated, true);
-  assert.equal(task.text, undefined);
-  assert.equal(task.totalCharacters, 80001);
-  assert.match(task.artifacts.json, /transcript\.json$/);
-
-  const artifact = JSON.parse(await fs.readFile(task.artifacts.json, "utf8"));
-  assert.equal(artifact.text.length, 80001);
-
-  server.child.kill();
-  await fs.rm(dataRoot, { recursive: true, force: true });
+  const server = startServer({ ZCODE_VOICE_DATA_DIR: dataRoot, ZCODE_VOICE_MOCK_TEXT: "长".repeat(80001) });
+  try {
+    await server.initialize();
+    const started = await server.call("start_transcription", { audioPath, outputFormat: "json" });
+    await waitFor(server, started.taskId);
+    const page = await server.call("read_transcript", { taskId: started.taskId, includeText: true, limit: 1 });
+    assert.equal(page.text.length, 80001);
+    assert.match(page.artifacts.json, /transcript\.json$/);
+  } finally {
+    await server.close();
+  }
 });

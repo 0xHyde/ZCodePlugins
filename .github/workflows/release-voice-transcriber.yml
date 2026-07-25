@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Git tag to publish, for example v0.2.0"
+        description: "Git tag to publish, for example v0.3.0"
         required: true
         type: string
   push:
@@ -28,6 +28,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install plugin build dependencies
+        run: npm install --prefix plugins/voice-transcriber --ignore-scripts
+
+      - name: Build bundled MCP server
+        run: npm run build:voice-plugin
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -106,6 +112,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install plugin build dependencies
+        run: npm install --prefix plugins/voice-transcriber --ignore-scripts
+
+      - name: Build bundled MCP server
+        run: npm run build:voice-plugin
 
       - name: Build minimal redistributable ffmpeg
         run: npm run build:ffmpeg
@@ -197,6 +209,16 @@ jobs:
             -o "release-assets/ffmpeg-${FFMPEG_REF}-source.tar.gz"
           mkdir -p release-assets/plugin-package
           cp -R plugins/voice-transcriber release-assets/plugin-package/voice-transcriber
+          rm -rf release-assets/plugin-package/voice-transcriber/node_modules
+          for spec in "darwin-arm64:darwin/arm64" "win32-x64:win32/x64"; do
+            prefix="${spec%%:*}"
+            target="release-assets/plugin-package/voice-transcriber/bin/${spec#*:}"
+            mkdir -p "$target"
+            while IFS= read -r file; do
+              name="${file##*/}"
+              cp "$file" "$target/${name#${prefix}-}"
+            done < <(find release-assets -type f -name "${prefix}-*" -not -path '*/plugin-package/*')
+          done
           (cd release-assets/plugin-package && zip -q -r "../voice-transcriber-plugin-${RELEASE_TAG}.zip" voice-transcriber)
           rm -rf release-assets/plugin-package
 

@@ -47,7 +47,17 @@ for (const entry of marketplace.plugins) {
     if (packageJson.version !== manifest.version) throw new Error(`${packagePath}: version does not match plugin manifest`);
   }
 
-  for (const key of ["model_manifest_url", "runtime_manifest_url"]) {
+  if (typeof manifest.skills === "string") {
+    const skillsPath = path.resolve(pluginPath, manifest.skills);
+    if (!(await exists(skillsPath))) throw new Error(`${manifestPath}: skills path does not exist: ${manifest.skills}`);
+  }
+
+  if (typeof manifest.mcpServers === "string") {
+    const mcpServersPath = path.resolve(pluginPath, manifest.mcpServers);
+    if (!(await exists(mcpServersPath))) throw new Error(`${manifestPath}: mcpServers path does not exist: ${manifest.mcpServers}`);
+  }
+
+  for (const key of ["model_manifest_url"]) {
     const value = manifest.userConfig?.[key]?.default;
     if (!value || !value.includes(`/v${manifest.version}/`)) {
       throw new Error(`${manifestPath}: ${key} must point to the matching immutable release`);
@@ -61,6 +71,11 @@ for (const entry of marketplace.plugins) {
     for (const [name, server] of Object.entries(mcp.mcpServers)) {
       if (!server.command || !Array.isArray(server.args)) throw new Error(`${mcpPath}: invalid server ${name}`);
     }
+  }
+
+  if (manifest.mcpServers) {
+    const distServer = path.join(pluginPath, "dist", "mcp", "server.js");
+    if (!(await exists(distServer))) throw new Error(`${pluginPath}: missing built MCP server at dist/mcp/server.js`);
   }
 
   for (const component of ["commands", "agents", "skills"]) {

@@ -7,6 +7,12 @@ plugins/*/models/*.gguf
 plugins/*/models/*.onnx
 plugins/*/bin/*/*
 !plugins/*/bin/**/README.md
+!plugins/voice-transcriber/bin/darwin/
+!plugins/voice-transcriber/bin/darwin/arm64/
+!plugins/voice-transcriber/bin/darwin/arm64/*
+!plugins/voice-transcriber/bin/win32/
+!plugins/voice-transcriber/bin/win32/x64/
+!plugins/voice-transcriber/bin/win32/x64/*
 
 # Local voice data
 .voice-transcriber/

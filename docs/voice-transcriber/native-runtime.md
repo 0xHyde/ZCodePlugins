@@ -1,15 +1,15 @@
 # voice-engine native sidecar
 
-这是 ZCode 插件的本地推理进程接口。当前仓库已提供 Node.js JSONL 开发实现；正式发布时替换为平台对应的 native binary。
+这是 ZCode 插件内部的本地推理进程接口。对 ZCode 来说，入口是插件包内编译后的 `dist/mcp/server.js`；MCP server 再启动 Node sidecar，sidecar 调用随插件发布的各平台 native runtime。模型权重不打包，首次转写时懒加载。
 
 ## 运行时方案
 
 - SenseVoiceSmall GGUF：QwenAudio 官方 llama.cpp runtime，配合官方 FSMN-VAD
 - CAM++：3D-Speaker 导出的 ONNX，使用 ONNX Runtime
-- 聚类、缓存、增量学习：C++ 或 Rust 实现；Node 版用于开发和协议测试
+- 聚类、缓存、增量学习：Node sidecar 负责任务和本地状态；CAM++ adapter 负责 ONNX 推理
 - 通信：JSON Lines over stdin/stdout
 
-开发阶段可以直接运行：
+开发或诊断阶段可以直接运行：
 
 ```bash
 node scripts/voice-engine.mjs --stdio
@@ -27,19 +27,17 @@ macOS ARM 构建使用 `--native on` 以利用 Apple Silicon；Windows x64 构�
 
 构建脚本只编译运行时，不下载模型；正式发布应将 `--ref` 固定到经过验证的提交或版本。
 
-正式运行时可通过 `ZCODE_VOICE_ENGINE` 指定 C++/Rust 二进制。
-
 SenseVoice 运行时会优先自动查找插件内的：
 
 ```text
 bin/<platform>/<arch>/llama-funasr-sensevoice[.exe]
 ```
 
-找不到时再使用 `ZCODE_SENSEVOICE_BINARY` 或系统 `PATH`。因此发布包只需要把对应平台的运行时放到自己的目录，不需要修改 JavaScript 代码。
+找不到时再使用 `ZCODE_SENSEVOICE_BINARY` 或系统 `PATH`。因此正式发布包直接带上对应平台 runtime，不需要用户再配置二进制下载地址。
 
 ## sidecar 协议
 
-请求：
+底层 sidecar 请求：
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"transcribe","params":{"audioPath":"/tmp/a.m4a","language":"auto","outputFormat":"markdown","speakerProfile":true}}
@@ -57,6 +55,8 @@ bin/<platform>/<arch>/llama-funasr-sensevoice[.exe]
 - `correct_speaker`
 - `enroll_from_correction`
 - `rollback_learning`
+
+ZCode 对外使用的是应用层异步 MCP 接口：先调用 `start_transcription` 获得 `taskId`，再轮询 `get_transcription_status`，完成后用 `read_transcript` 分页读取全文。这样不依赖 ZCode 是否实现 MCP Tasks，也不会让一次长会议请求长期占住单次调用。
 
 ## CAM++ adapter 协议
 
@@ -96,7 +96,7 @@ ZCODE_CAMPP_ARGS='["--model","/path/to/campp.onnx"]'
 
 SenseVoice 子进程在单次转写结束后退出，释放模型内存；CAM++ adapter 为减少重复加载默认常驻，空闲 30 秒后自动退出。
 
-官方 runtime 只直接处理 16kHz、单声道、16-bit WAV。插件会优先复用符合条件的 WAV；对 MP3、M4A 和其他 WAV，调用随平台 runtime 自动下载的 `ffmpeg` 转换，任务结束后删除临时 WAV。也可以用 `ZCODE_AUDIO_CONVERTER` 覆盖路径。
+官方 runtime 只直接处理 16kHz、单声道、16-bit WAV。插件会优先复用符合条件的 WAV；对 MP3、M4A 和其他 WAV，调用随插件发布的 `ffmpeg` 转换，任务结束后删除临时 WAV。也可以用 `ZCODE_AUDIO_CONVERTER` 覆盖路径。
 
 ## 性能约束
 

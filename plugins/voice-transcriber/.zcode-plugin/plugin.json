@@ -1,6 +1,6 @@
 {
   "name": "voice-transcriber",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "本地录音转写、说话人识别与可回滚的无感声纹学习",
   "author": {
     "name": "ZCodePlugins"
@@ -13,6 +13,8 @@
     "speaker-diarization",
     "local"
   ],
+  "skills": "skills",
+  "mcpServers": ".mcp.json",
   "userConfig": {
     "sensevoice_model": {
       "title": "SenseVoice GGUF 模型",
@@ -52,15 +54,9 @@
     },
     "model_manifest_url": {
       "title": "模型下载 manifest",
-      "description": "GitHub、ModelScope 或 Hugging Face 的模型 manifest 地址；首次转写时自动下载模型",
+      "description": "通常无需修改；首次转写时自动下载本地模型",
       "type": "string",
-      "default": "https://github.com/0xHyde/ZCodePlugins/releases/download/v0.2.0/model-manifest.json"
-    },
-    "runtime_manifest_url": {
-      "title": "运行时下载 manifest",
-      "description": "可选的 GitHub Release 运行时清单；找不到平台二进制时自动下载",
-      "type": "string",
-      "default": "https://github.com/0xHyde/ZCodePlugins/releases/download/v0.2.0/runtime-manifest.json"
+      "default": "https://github.com/0xHyde/ZCodePlugins/releases/download/v0.3.0/model-manifest.json"
     }
   }
 }

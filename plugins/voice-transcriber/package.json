@@ -1,10 +1,17 @@
 {
   "name": "voice-transcriber-zcode-plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build:campp": "node ../../tools/build-campp.mjs",
+    "build": "node ../../tools/build-voice-plugin.mjs",
     "test": "node --test tests/mcp-server.test.mjs tests/model-bootstrap.test.mjs tests/runtime.test.mjs tests/sensevoice-parser.test.mjs tests/audio-prep.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }
