@@ -90,6 +90,11 @@ async function addSegmentOutput(source) {
 }
 
 const ref = option("ref", process.env.ZCODE_SENSEVOICE_REF || "runtime-llamacpp-v0.1.9");
+const nativeOption = option(
+  "native",
+  process.env.ZCODE_SENSEVOICE_NATIVE || (process.platform === "darwin" ? "on" : "off"),
+).toLowerCase();
+if (!["on", "off"].includes(nativeOption)) throw new Error("--native 只能是 on 或 off。");
 const output = path.resolve(option(
   "output",
   path.join(pluginRoot, "bin", process.platform, process.arch),
@@ -104,7 +109,12 @@ try {
   await run("git", ["clone", "--depth", "1", "--branch", ref, "--recurse-submodules", repository, source], root);
   await addSegmentOutput(source);
   const cmakeSource = path.join(source, "runtime", "llama.cpp");
-  await run("cmake", ["-S", cmakeSource, "-B", build, "-DCMAKE_BUILD_TYPE=Release"], root);
+  await run("cmake", [
+    "-S", cmakeSource,
+    "-B", build,
+    "-DCMAKE_BUILD_TYPE=Release",
+    `-DGGML_NATIVE=${nativeOption === "on" ? "ON" : "OFF"}`,
+  ], root);
   await run("cmake", ["--build", build, "--config", "Release", "-j", jobs], root);
 
   const binaryName = process.platform === "win32" ? "llama-funasr-sensevoice.exe" : "llama-funasr-sensevoice";
@@ -114,7 +124,7 @@ try {
   const destination = path.join(output, binaryName);
   await fs.copyFile(binary, destination);
   if (process.platform !== "win32") await fs.chmod(destination, 0o755);
-  console.log(JSON.stringify({ repository, ref, output: destination, jobs, segmentOutput: true }, null, 2));
+  console.log(JSON.stringify({ repository, ref, output: destination, jobs, native: nativeOption, segmentOutput: true }, null, 2));
 } finally {
   if (!keepBuild) await fs.rm(temporaryRoot, { recursive: true, force: true });
   else console.log(`保留构建目录：${temporaryRoot}`);

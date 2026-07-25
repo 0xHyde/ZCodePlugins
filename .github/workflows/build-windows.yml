@@ -23,7 +23,7 @@ jobs:
           node-version: 22
 
       - name: Build official SenseVoice runtime
-        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --jobs 2
+        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --native off --jobs 2
 
       - name: Build CAM++ ONNX Runtime adapter
         run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2

@@ -21,6 +21,9 @@ node scripts/voice-engine.mjs --stdio
 npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9
 ```
 
+macOS ARM 构建使用 `--native on` 以利用 Apple Silicon；Windows x64 构建使用
+`--native off`，由 CPU runtime dispatch 适配不同的 AVX/AVX2 机器，避免把构建机的指令集要求带到用户电脑。
+
 构建脚本只编译运行时，不下载模型；正式发布应将 `--ref` 固定到经过验证的提交或版本。
 
 正式运行时可通过 `ZCODE_VOICE_ENGINE` 指定 C++/Rust 二进制。
