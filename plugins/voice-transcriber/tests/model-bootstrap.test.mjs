@@ -110,3 +110,37 @@ test("model bootstrap falls back across approved ModelScope and Hugging Face mir
     await fs.rm(dataRoot, { recursive: true, force: true });
   }
 });
+
+test("model bootstrap does not block transcription when an optional speaker model is unavailable", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-model-bootstrap-optional-"));
+  const requiredPayload = Buffer.from("required model");
+  const requiredChecksum = crypto.createHash("sha256").update(requiredPayload).digest("hex");
+  const optionalChecksum = crypto.createHash("sha256").update("optional model").digest("hex");
+  const manifestUrl = "https://raw.githubusercontent.com/example/models/main/model-manifest.json";
+  const requiredUrl = "https://www.modelscope.cn/models/example/asr/resolve/master/asr.gguf";
+  const optionalUrl = "https://www.modelscope.cn/models/example/speaker/resolve/master/campp.onnx";
+  const manifest = {
+    version: "test-optional-1",
+    files: [
+      { name: "sense-voice-small-q8_0.gguf", url: requiredUrl, sha256: requiredChecksum, size: requiredPayload.length, required: true },
+      { name: "cam++.onnx", url: optionalUrl, sha256: optionalChecksum, required: false },
+    ],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url === manifestUrl) return { ok: true, status: 200, json: async () => manifest };
+    if (url === requiredUrl) return { ok: true, status: 200, body: Readable.toWeb(Readable.from([requiredPayload])) };
+    return { ok: false, status: 503 };
+  };
+
+  try {
+    const result = await ensureModels({ dataRoot, manifestUrl });
+    assert.equal(result.ready, true);
+    assert.deepEqual(result.downloaded, ["sense-voice-small-q8_0.gguf"]);
+    assert.deepEqual(result.optionalMissing, ["cam++.onnx"]);
+    assert.equal(result.optionalFailures[0].name, "cam++.onnx");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
+});

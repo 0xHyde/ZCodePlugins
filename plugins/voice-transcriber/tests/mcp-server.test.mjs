@@ -37,6 +37,8 @@ function startServer(extraEnv = {}) {
 
 test("ZCode MCP server exposes the local voice tools", async () => {
   const server = startServer();
+  const initialized = await server.request("initialize", { protocolVersion: "2024-11-05" });
+  assert.equal(initialized.result.serverInfo.version, "0.2.0");
   const response = await server.request("tools/list");
   const names = response.result.tools.map((tool) => tool.name);
   assert.deepEqual(names, ["transcribe_audio"]);

@@ -74,6 +74,7 @@ export async function prepareAudio({ audioPath, dataRoot, taskId, converter = pr
   if (await isSenseVoiceWav(audioPath)) return { path: audioPath, converted: false, cleanup: async () => {} };
   const runtime = await resolveRuntimeCommand({
     pluginRoot,
+    dataRoot,
     configured: converter,
     defaultName: "ffmpeg",
   });

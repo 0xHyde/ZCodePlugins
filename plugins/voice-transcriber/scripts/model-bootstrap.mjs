@@ -148,6 +148,7 @@ export async function ensureModels({ dataRoot, manifestUrl = process.env.ZCODE_V
   const installedFile = path.join(modelDir, "installed.json");
   const installed = await readJson(installedFile, null);
   const downloaded = [];
+  const optionalFailures = [];
   for (const entry of entries) {
     const target = path.join(modelDir, entry.name);
     const recorded = installed?.files?.find((file) => file.name === entry.name && file.sha256 === entry.sha256 && file.version === manifest.version);
@@ -162,8 +163,10 @@ export async function ensureModels({ dataRoot, manifestUrl = process.env.ZCODE_V
       const urls = [...candidateValues.map((value) => new URL(value, baseUrl).toString()), new URL(entry.name, baseUrl).toString()];
       await downloadAndVerify(entry, urls, target);
     } catch (error) {
-      if (error.code) throw error;
-      throw fail(`模型 ${entry.name} 下载地址无效：${error.message}`, "invalid_model_source");
+      const resolvedError = error.code ? error : fail(`模型 ${entry.name} 下载地址无效：${error.message}`, "invalid_model_source");
+      if (entry.required) throw resolvedError;
+      optionalFailures.push({ name: entry.name, code: resolvedError.code, message: resolvedError.message });
+      continue;
     }
     downloaded.push(entry.name);
   }
@@ -175,6 +178,7 @@ export async function ensureModels({ dataRoot, manifestUrl = process.env.ZCODE_V
     modelDir,
     missing,
     optionalMissing: availability.filter(({ entry, exists }) => !entry.required && !exists).map(({ entry }) => entry.name),
+    optionalFailures,
     downloaded,
   };
 }

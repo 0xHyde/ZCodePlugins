@@ -7,6 +7,8 @@ on:
       - "plugins/voice-transcriber/native/**"
       - "plugins/voice-transcriber/scripts/**"
       - "tools/build-*.mjs"
+      - "tools/build-ffmpeg.sh"
+      - "package.json"
       - ".github/workflows/build-windows.yml"
 
 jobs:
@@ -22,11 +24,29 @@ jobs:
         with:
           node-version: 22
 
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            make
+            diffutils
+            nasm
+            mingw-w64-ucrt-x86_64-gcc
+
+      - name: Build minimal redistributable ffmpeg
+        shell: msys2 {0}
+        env:
+          ZCODE_RUNTIME_PLATFORM: win32
+          ZCODE_RUNTIME_ARCH: x64
+        run: bash tools/build-ffmpeg.sh
+
       - name: Build official SenseVoice runtime
         run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --native off --jobs 2
 
       - name: Build CAM++ ONNX Runtime adapter
-        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2
+        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || '065629c313eaf1a01c65c640c46d77e61e9607b4' }} --ort-version 1.12.0 --jobs 2
 
       - name: Run JavaScript tests and plugin validation
         shell: cmd
@@ -39,7 +59,9 @@ jobs:
         run: |
           if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/llama-funasr-sensevoice.exe")) { throw "SenseVoice runtime missing" }
           if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/campp-adapter.exe")) { throw "CAM++ adapter missing" }
+          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/ffmpeg.exe")) { throw "ffmpeg runtime missing" }
           if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/onnxruntime.dll")) { throw "ONNX Runtime DLL missing" }
+          & "plugins/voice-transcriber/bin/win32/x64/ffmpeg.exe" -version | Out-Null
           $request = '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}'
           $response = $request | & "plugins/voice-transcriber/bin/win32/x64/campp-adapter.exe" --stdio
           if (!$response) { throw "CAM++ adapter did not start" }

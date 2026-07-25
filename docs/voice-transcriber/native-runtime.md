@@ -19,6 +19,7 @@ node scripts/voice-engine.mjs --stdio
 
 ```bash
 npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9
+npm run build:campp -- --ref 065629c313eaf1a01c65c640c46d77e61e9607b4
 ```
 
 macOS ARM 构建使用 `--native on` 以利用 Apple Silicon；Windows x64 构建使用
@@ -95,7 +96,7 @@ ZCODE_CAMPP_ARGS='["--model","/path/to/campp.onnx"]'
 
 SenseVoice 子进程在单次转写结束后退出，释放模型内存；CAM++ adapter 为减少重复加载默认常驻，空闲 30 秒后自动退出。
 
-官方 runtime 只直接处理 16kHz、单声道、16-bit WAV。插件会优先复用符合条件的 WAV；对 MP3、M4A 和其他 WAV，调用本地 `ffmpeg` 转换，任务结束后删除临时 WAV。发布包应将对应平台的 `ffmpeg` 放入 `bin/<platform>/<arch>/`，或使用 `ZCODE_AUDIO_CONVERTER` 指定路径。
+官方 runtime 只直接处理 16kHz、单声道、16-bit WAV。插件会优先复用符合条件的 WAV；对 MP3、M4A 和其他 WAV，调用随平台 runtime 自动下载的 `ffmpeg` 转换，任务结束后删除临时 WAV。也可以用 `ZCODE_AUDIO_CONVERTER` 覆盖路径。
 
 ## 性能约束
 

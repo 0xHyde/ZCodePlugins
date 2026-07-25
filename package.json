@@ -5,6 +5,7 @@
     "test:voice-transcriber": "node --test plugins/voice-transcriber/tests/mcp-server.test.mjs plugins/voice-transcriber/tests/model-bootstrap.test.mjs plugins/voice-transcriber/tests/runtime.test.mjs plugins/voice-transcriber/tests/runtime-bootstrap.test.mjs plugins/voice-transcriber/tests/sensevoice-parser.test.mjs plugins/voice-transcriber/tests/audio-prep.test.mjs",
     "build:sensevoice": "node tools/build-sensevoice.mjs",
     "build:campp": "node tools/build-campp.mjs",
+    "build:ffmpeg": "bash tools/build-ffmpeg.sh",
     "bench:voice-transcriber": "node tools/benchmark-voice-engine.mjs",
     "validate": "node tools/validate-plugins.mjs"
   }

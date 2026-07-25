@@ -9,6 +9,8 @@ const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pluginRoot = path.join(root, "plugins", "voice-transcriber");
 const repository = "https://github.com/QwenAudio/SenseVoice.git";
+const defaultRef = "runtime-llamacpp-v0.1.9";
+const defaultCommit = "73ccdd3577db37e92dbf22a4a9fc323b038cf13b";
 
 function option(name, fallback = null) {
   const index = process.argv.indexOf(`--${name}`);
@@ -89,7 +91,7 @@ async function addSegmentOutput(source) {
   return file;
 }
 
-const ref = option("ref", process.env.ZCODE_SENSEVOICE_REF || "runtime-llamacpp-v0.1.9");
+const ref = option("ref", process.env.ZCODE_SENSEVOICE_REF || defaultRef);
 const nativeOption = option(
   "native",
   process.env.ZCODE_SENSEVOICE_NATIVE || (process.platform === "darwin" ? "on" : "off"),
@@ -107,6 +109,10 @@ const build = path.join(temporaryRoot, "build");
 
 try {
   await run("git", ["clone", "--depth", "1", "--branch", ref, "--recurse-submodules", repository, source], root);
+  if (ref === defaultRef) {
+    const revision = (await run("git", ["rev-parse", "HEAD"], source)).stdout.trim();
+    if (revision !== defaultCommit) throw new Error(`SenseVoice ${defaultRef} 提交不匹配：${revision}`);
+  }
   await addSegmentOutput(source);
   const cmakeSource = path.join(source, "runtime", "llama.cpp");
   await run("cmake", [

@@ -1,72 +1,59 @@
 # voice-transcriber
 
-ZCode 的全本地录音转写插件，面向会议、访谈和调研场景。
+ZCode 的全本地录音转写 MCP 插件，面向会议、访谈和调研场景。
 
-## 能做什么
+## 使用体验
 
-- SenseVoice 本地语音转文字，保留时间戳和完整全文
-- CAM++ 说话人匹配、注册、修正和回滚
-- 从 VAD 自动切出的片段中无感积累说话人样本
-- 将修正结果写回本地档案，让后续录音逐步变准
-- MCP 返回适合 Agent 消费的摘要片段，同时保留本地完整转写产物
-- 不上传录音，不内置摘要大模型
+用户只需把本地录音文件交给 ZCode。插件会自动准备运行时和模型、转换音频、转写、区分说话人，并把完整全文保存为本地产物。ZCode 可以继续生成摘要、纪要、行动项或做内容检索。
 
-## 运行方式
+说话人修正会把确认过的真实会议片段加入本地声纹档案，后续录音自动匹配；所有学习操作均可回滚。
 
-插件通过 `.mcp.json` 启动本地 Node.js MCP 服务。首次转写时按需准备：
+## 本地组件
 
-1. 音频转换器（MP3/M4A 等格式通常需要 ffmpeg）
-2. SenseVoice native runtime
-3. SenseVoice 模型
-4. 可选的 CAM++ runtime 和模型
+- QwenAudio 官方 SenseVoice llama.cpp runtime
+- 官方 SenseVoiceSmall Q8 GGUF
+- 官方 FSMN-VAD GGUF
+- CAM++ ONNX 与 ONNX Runtime
+- 随平台 runtime 发布的 ffmpeg
 
-不转写时不会保持推理进程；CAM++ adapter 空闲一段时间后自动退出。
+插件安装时不下载模型。首次转写时按当前平台从 GitHub Release 下载 runtime，并优先从 ModelScope 下载模型；全部文件经过 SHA256 校验。之后可以断网使用。
 
-已发布 runtime 会从 GitHub Release 按当前平台下载并校验 SHA256。模型不随插件或 runtime 发布，需要手动配置或使用独立模型 manifest。
+默认目录：
 
-## 配置
+```text
+~/.zcode/voice-transcriber/models/
+~/.zcode/voice-transcriber/runtimes/<platform>-<arch>/
+~/.zcode/voice-transcriber/artifacts/
+```
 
-常用配置项：
+不转写时不会常驻 SenseVoice 推理进程；CAM++ adapter 空闲 30 秒后自动退出。
+
+## 高级配置
+
+一般无需配置。需要使用自定义文件时可在 ZCode 插件设置中覆盖：
 
 ```text
 ZCODE_SENSEVOICE_MODEL=/path/to/sense-voice-small-q8_0.gguf
+ZCODE_FSMN_VAD_MODEL=/path/to/fsmn-vad.gguf
 ZCODE_CAMPP_MODEL=/path/to/cam++.onnx
-ZCODE_SENSEVOICE_BINARY=llama-funasr-sensevoice
-ZCODE_VOICE_THREADS=4
+ZCODE_SENSEVOICE_BINARY=/path/to/llama-funasr-sensevoice
 ZCODE_CAMPP_COMMAND=/path/to/campp-adapter
-ZCODE_AUDIO_CONVERTER=ffmpeg
-ZCODE_VOICE_MODEL_MANIFEST_URL=https://raw.githubusercontent.com/0xHyde/ZCodePlugins/main/model-manifest.json
-ZCODE_VOICE_RUNTIME_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json
+ZCODE_AUDIO_CONVERTER=/path/to/ffmpeg
+ZCODE_VOICE_THREADS=4
 ```
 
-模型默认目录是 `~/.zcode/voice-transcriber/models/`，运行时默认目录是 `~/.zcode/voice-transcriber/runtimes/<platform>-<arch>/`。
+发布版 manifest：
 
-## 开发
+```text
+https://github.com/0xHyde/ZCodePlugins/releases/download/v0.2.0/runtime-manifest.json
+https://github.com/0xHyde/ZCodePlugins/releases/download/v0.2.0/model-manifest.json
+```
 
-在插件目录外执行：
+## 开发校验
 
 ```bash
 npm run test:voice-transcriber
 npm run validate
 ```
 
-native runtime 构建：
-
-```bash
-npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9
-npm run build:campp -- --ref main
-```
-
-模型清单生成：
-
-```bash
-node tools/create-model-manifest.mjs \
-  --input /path/to/model-assets \
-  --version models-v0.1.0 \
-  --repository OWNER/REPO \
-  --asset-prefix models- \
-  --optional cam++.onnx \
-  --output model-manifest.json
-```
-
-更多说明见 [`docs/voice-transcriber/`](../../docs/voice-transcriber/)。
+架构与发布说明见 [`docs/voice-transcriber/`](../../docs/voice-transcriber/)。
