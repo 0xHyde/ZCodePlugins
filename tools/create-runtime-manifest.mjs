@@ -18,6 +18,7 @@ const input = path.resolve(option("input"));
 const output = path.resolve(option("output", "runtime-manifest.json"));
 const version = option("version");
 const repository = option("repository");
+const assetPrefix = option("asset-prefix", "");
 if (!version || !repository) throw new Error("需要 --version 和 --repository。");
 
 const files = (await fs.readdir(input, { withFileTypes: true }))
@@ -31,7 +32,7 @@ const arch = path.basename(input);
 const baseUrl = `https://github.com/${repository}/releases/download/${version}/`;
 const entries = await Promise.all(files.map(async (name) => ({
   name,
-  url: new URL(name, baseUrl).toString(),
+  url: new URL(`${assetPrefix}${name}`, baseUrl).toString(),
   sha256: await sha256(path.join(input, name)),
   required: true,
 })));
