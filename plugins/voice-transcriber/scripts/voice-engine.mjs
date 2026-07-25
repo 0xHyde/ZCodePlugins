@@ -390,9 +390,29 @@ async function configureCamppRuntime() {
 
 async function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    const runtimeDirectory = path.dirname(path.resolve(command));
+    const environment = { ...process.env, ...(options.env || {}) };
+    if (process.platform === "win32") {
+      // ZCode Desktop is an Electron/Node process. Do not leak host runtime
+      // flags into a native GGML executable launched from that process tree.
+      for (const key of [
+        "NODE_OPTIONS",
+        "ELECTRON_RUN_AS_NODE",
+        "ELECTRON_NO_ATTACH_CONSOLE",
+        "ELECTRON_ENABLE_LOGGING",
+        "ELECTRON_ENABLE_STACK_DUMPING",
+      ]) delete environment[key];
+      const pathKey = Object.keys(environment).find((key) => key.toLowerCase() === "path") || "PATH";
+      environment[pathKey] = [runtimeDirectory, environment[pathKey]].filter(Boolean).join(path.delimiter);
+    }
     const child = spawn(command, args, {
-      cwd: options.cwd || pluginRoot,
+      // The official SenseVoice CLI is normally run from its runtime folder.
+      // Keep that working directory so native sidecar assets/DLL lookup match
+      // the verified manual invocation on Windows.
+      cwd: options.cwd || runtimeDirectory,
       windowsHide: true,
+      shell: false,
+      env: environment,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -402,7 +422,10 @@ async function runCommand(command, args, options = {}) {
     child.once("error", (error) => reject(fail(`${command} 无法启动：${error.message}`, "backend_not_found")));
     child.once("close", (code, signal) => {
       if (code !== 0) {
-        reject(fail(`${command} 运行失败 (code=${code}, signal=${signal})${stderr ? `: ${stderr.trim()}` : ""}`, "backend_failed"));
+        const windowsHint = process.platform === "win32" && code === 3221226505
+          ? "；Windows GGML 内存上下文初始化失败，已隔离 Electron/Node 环境变量，请检查 runtime 与模型路径"
+          : "";
+        reject(fail(`${command} 运行失败 (code=${code}, signal=${signal})${windowsHint}${stderr ? `: ${stderr.trim()}` : ""}`, "backend_failed"));
       } else {
         resolve({ stdout, stderr });
       }
