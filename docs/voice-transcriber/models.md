@@ -1,6 +1,11 @@
-# Model pack
+# 模型管理
 
-模型文件不直接提交到 Git。插件会优先使用 ZCode 配置中的路径；未配置时自动查找：
+模型权重不提交到 Git，也不随插件 runtime 打包。插件支持两种方式：
+
+1. 用户在 ZCode 配置中填写模型路径；
+2. 配置一个 GitHub 模型 manifest，首次转写时按需下载。
+
+默认目录：
 
 ```text
 ~/.zcode/voice-transcriber/models/
@@ -8,32 +13,69 @@
 └── cam++.onnx
 ```
 
-推荐模型：
+SenseVoice 是必需模型。CAM++ 只在需要说话人识别、注册和自动匹配时使用，可以作为可选文件。
 
-- `sense-voice-small-q8_0.gguf`
-- `cam++.onnx`
+## Manifest 格式
 
-其中 CAM++ ONNX 是由 native adapter 通过 ONNX Runtime 加载的 192 维说话人向量模型；adapter 进程按需启动，空闲后退出，不在未转写时常驻内存。当前构建脚本按平台下载 ONNX Runtime 和 3D-Speaker 的特征提取源码，最终插件只携带编译产物，不携带用户模型。
-
-`fsmn-vad.gguf` 仅用于兼容其他 VAD runtime，不是 SenseVoice.cpp 的必需模型。
-
-配置 GitHub Release 的 `model-manifest.json` 后，首次转写会自动下载缺失模型、校验 SHA256 并写入上述目录；下载失败不会留下半成品文件。也可以手动放入模型文件。插件运行时不上传录音。
-
-这里的 GitHub 地址需要在最终发布前替换为项目方实际维护的 Release/Raw 地址；仓库不伪造默认下载源。模型权重必须先确认对应许可证允许再分发，不能因为代码仓库公开就默认可以打包或镜像。
-
-## Runtime manifest
-
-原生运行时不提交到 Git。可在 ZCode 配置 `ZCODE_VOICE_RUNTIME_MANIFEST_URL`，运行时缺失时插件会按当前平台下载并校验 `sense-voice-main`、`campp-adapter` 和 ONNX Runtime 动态库。运行时清单与模型清单分开，便于独立升级；没有配置清单时仍可使用插件内或用户手动指定的运行时。
-
-manifest 最小格式：
+完整示例见 [`model-manifest.example.json`](model-manifest.example.json)。最小格式如下：
 
 ```json
 {
-  "version": "2026.07.1",
-  "baseUrl": "https://github.com/OWNER/REPO/releases/download/models-2026.07.1/",
+  "version": "models-v0.1.0",
+  "baseUrl": "https://github.com/OWNER/REPO/releases/download/models-v0.1.0/",
   "files": [
-    { "name": "sense-voice-small-q8_0.gguf", "sha256": "...", "required": true },
-    { "name": "cam++.onnx", "sha256": "...", "required": false }
+    {
+      "name": "sense-voice-small-q8_0.gguf",
+      "url": "https://github.com/OWNER/REPO/releases/download/models-v0.1.0/models-sense-voice-small-q8_0.gguf",
+      "sha256": "64 位十六进制 SHA256",
+      "size": 123456789,
+      "required": true
+    },
+    {
+      "name": "cam++.onnx",
+      "url": "https://github.com/OWNER/REPO/releases/download/models-v0.1.0/models-cam%2B%2B.onnx",
+      "sha256": "64 位十六进制 SHA256",
+      "size": 123456789,
+      "required": false
+    }
   ]
 }
+```
+
+下载器会检查：
+
+- manifest 和模型 URL 必须是 GitHub HTTPS 地址
+- 文件名只能是当前目录文件名，禁止路径穿越
+- 下载后的文件大小和 SHA256 必须匹配
+- 下载使用临时文件，失败不会留下半成品
+- 已安装且版本、SHA256 一致的模型不会重复下载
+
+## 生成清单
+
+模型文件准备好后，在本地模型目录执行：
+
+```bash
+node tools/create-model-manifest.mjs \
+  --input /path/to/model-assets \
+  --version models-v0.1.0 \
+  --repository OWNER/REPO \
+  --asset-prefix models- \
+  --optional cam++.onnx \
+  --output model-manifest.json
+```
+
+然后将带 `models-` 前缀的模型资产和 `model-manifest.json` 一起上传到对应 GitHub Release，并在 ZCode 中配置：
+
+```text
+ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/OWNER/REPO/releases/download/models-v0.1.0/model-manifest.json
+```
+
+目前项目没有预置模型下载源。原因是模型权重的来源、许可证和长期托管地址必须先确认，不能仅凭代码仓库公开就自动再分发。
+
+## Runtime manifest
+
+运行时清单和模型清单分开：runtime manifest 管理可执行文件和动态库，model manifest 管理模型权重。当前正式 runtime manifest：
+
+```text
+https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json
 ```

@@ -19,10 +19,10 @@ SenseVoice 子运行时默认放在同一平台目录下，文件名为 `sense-v
 
 ## 当前发布阻塞项
 
-- P0：创建第一个 GitHub Release，发布 Windows x64 与 macOS arm64 runtime、合并后的 `runtime-manifest.json`、模型 `model-manifest.json`、SHA256 和版本号。
-- P0：macOS arm64 已接入统一 Release 工作流，并已随 `v0.1.0` 正式发布。
+- 已完成：`v0.1.0` 发布 Windows x64 与 macOS arm64 runtime、合并后的 `runtime-manifest.json`、SHA256 和版本号。
+- P0：确认模型来源和许可证后，发布独立的 `model-manifest.json`；模型权重不进入插件仓库或 runtime Release。
 - P0：在 Windows 上用真实 SenseVoice Q8、CAM++ 模型和会议录音完成端到端验收；当前 CI 已验证编译、启动、测试和打包，但没有把模型放入 CI。
-- P0：确认 ZCode Marketplace 安装流程能够读取 manifest，并在首次转写时自动下载缺失 runtime/model。
+- P0：确认 ZCode Marketplace 安装流程能够读取 runtime manifest，并在首次转写时自动下载缺失 runtime；模型下载等模型清单发布后再启用。
 - P1：确认 Windows 用户没有 ffmpeg 时的自动发现、清晰提示或 ZCode 提供的音频转换能力。
 - P1：在常见 CPU / 内存档位上记录冷启动、实时率、内存和长录音稳定性。
 - P1：增加声纹档案加密、文件权限、数据删除和版本迁移。

@@ -1,0 +1,20 @@
+{
+  "version": "models-v0.1.0",
+  "baseUrl": "https://github.com/OWNER/REPO/releases/download/models-v0.1.0/",
+  "files": [
+    {
+      "name": "sense-voice-small-q8_0.gguf",
+      "url": "https://github.com/OWNER/REPO/releases/download/models-v0.1.0/models-sense-voice-small-q8_0.gguf",
+      "sha256": "REPLACE_WITH_64_HEX_SHA256",
+      "size": 0,
+      "required": true
+    },
+    {
+      "name": "cam++.onnx",
+      "url": "https://github.com/OWNER/REPO/releases/download/models-v0.1.0/models-cam%2B%2B.onnx",
+      "sha256": "REPLACE_WITH_64_HEX_SHA256",
+      "size": 0,
+      "required": false
+    }
+  ]
+}

@@ -85,6 +85,9 @@ function validateFileEntry(entry) {
   if (!/^[a-f0-9]{64}$/i.test(entry.sha256 || "")) {
     throw fail(`模型 ${entry.name} 缺少有效 SHA256。`, "invalid_model_manifest");
   }
+  if (entry.size !== undefined && (!Number.isSafeInteger(entry.size) || entry.size < 0)) {
+    throw fail(`模型 ${entry.name} 缺少有效文件大小。`, "invalid_model_manifest");
+  }
 }
 
 export async function ensureModels({ dataRoot, manifestUrl = process.env.ZCODE_VOICE_MODEL_MANIFEST_URL } = {}) {
@@ -131,6 +134,11 @@ export async function ensureModels({ dataRoot, manifestUrl = process.env.ZCODE_V
       throw fail(`模型 ${entry.name} 下载地址无效：${error.message}`, "invalid_model_source");
     }
     await downloadFile(url, target);
+    const downloadedSize = (await fs.stat(target)).size;
+    if (entry.size !== undefined && downloadedSize !== entry.size) {
+      await fs.rm(target, { force: true });
+      throw fail(`下载的模型大小校验失败：${entry.name}`, "model_size_mismatch");
+    }
     if (await sha256(target) !== entry.sha256.toLowerCase()) {
       await fs.rm(target, { force: true });
       throw fail(`下载的模型校验失败：${entry.name}`, "model_checksum_mismatch");

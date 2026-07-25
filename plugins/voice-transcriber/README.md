@@ -1,102 +1,71 @@
 # voice-transcriber
 
-ZCode 本地录音转写与说话人学习插件。
+ZCode 的全本地录音转写插件，面向会议、访谈和调研场景。
 
-设计、模型和发布说明见根目录 [`docs/voice-transcriber/`](../../docs/voice-transcriber/)。
+## 能做什么
 
-当前已完成：
+- SenseVoice 本地语音转文字，保留时间戳和完整全文
+- CAM++ 说话人匹配、注册、修正和回滚
+- 从 VAD 自动切出的片段中无感积累说话人样本
+- 将修正结果写回本地档案，让后续录音逐步变准
+- MCP 返回适合 Agent 消费的摘要片段，同时保留本地完整转写产物
+- 不上传录音，不内置摘要大模型
 
-- 使用 ZCode 原生 `.zcode-plugin/plugin.json` 清单
-- ZCode MCP stdio 服务注册
-- 转写、说话人修正、无感注册、任务查询、声纹学习回滚工具契约
-- 本地任务和说话人元数据存储
-- native voice-engine sidecar 协议
-- 可直接启动的 Node.js 开发版 voice-engine
-- SenseVoice.cpp 命令适配，支持时间戳输出
-- 文件哈希任务缓存和缓存命中
-- 单一 `transcribe_audio` MCP 入口，内部自动处理状态、读取、搜索和无感学习
-- 发布版首次转写时按项目 GitHub Release manifest 自动下载模型，并校验 SHA256
-- CAM++ JSONL adapter 协议、已确认片段注册、自动匹配和可回滚学习
-- CAM++ 原生 ONNX Runtime adapter 构建脚本，macOS arm64 已完成真实构建和端到端验证
-- Windows x64 原生 runtime 已由 GitHub Actions 成功编译、验证并打包
-- macOS arm64 构建流程已加入 GitHub Actions，发布时使用同一 runtime manifest
-- 可选的 GitHub Release runtime manifest；缺少平台二进制时按需下载并校验 SHA256
-- 可供 ZCode Agent 消费的 JSON/Markdown 转写产物、分页读取和本地搜索
+## 运行方式
 
-仍需完成的发布工作：
+插件通过 `.mcp.json` 启动本地 Node.js MCP 服务。首次转写时按需准备：
 
-- 创建第一个正式 GitHub Release，并配置 runtime/model manifest
-- 在 Windows 上使用真实模型和会议音频完成端到端验收；Linux 暂不纳入当前发布范围
-- 在常见 CPU / 内存档位上补齐端到端性能基准
-- 完成 ffmpeg 依赖发现、代码签名和 Marketplace 安装验收
+1. 音频转换器（MP3/M4A 等格式通常需要 ffmpeg）
+2. SenseVoice native runtime
+3. SenseVoice 模型
+4. 可选的 CAM++ runtime 和模型
 
-## 本地运行
+不转写时不会保持推理进程；CAM++ adapter 空闲一段时间后自动退出。
 
-ZCode 启用插件后会通过 `.mcp.json` 启动：
+已发布 runtime 会从 GitHub Release 按当前平台下载并校验 SHA256。模型不随插件或 runtime 发布，需要手动配置或使用独立模型 manifest。
+
+## 配置
+
+常用配置项：
 
 ```text
-node scripts/mcp-server.mjs
-```
-
-开发版默认使用插件内的 Node.js sidecar。正式 native sidecar 可以通过 `ZCODE_VOICE_ENGINE` 指定，例如：
-
-```text
-ZCODE_VOICE_ENGINE=/absolute/path/to/voice-engine
-```
-
-SenseVoice.cpp 后端配置：
-
-```text
+ZCODE_SENSEVOICE_MODEL=/path/to/sense-voice-small-q8_0.gguf
+ZCODE_CAMPP_MODEL=/path/to/cam++.onnx
 ZCODE_SENSEVOICE_BINARY=sense-voice-main
-ZCODE_SENSEVOICE_MODEL=/absolute/path/to/sense-voice-small-q8_0.gguf
+ZCODE_CAMPP_COMMAND=/path/to/campp-adapter
 ZCODE_AUDIO_CONVERTER=ffmpeg
-ZCODE_CAMPP_MODEL=/absolute/path/to/campp.onnx
-ZCODE_CAMPP_COMMAND=/absolute/path/to/campp-adapter
-ZCODE_CAMPP_ARGS='["--model","/absolute/path/to/campp.onnx"]'
-ZCODE_VOICE_MODEL_MANIFEST_URL=https://raw.githubusercontent.com/OWNER/REPO/main/model-manifest.json
-ZCODE_VOICE_RUNTIME_MANIFEST_URL=https://raw.githubusercontent.com/OWNER/REPO/main/runtime-manifest.json
+ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/OWNER/REPO/releases/download/models-v0.1.0/model-manifest.json
+ZCODE_VOICE_RUNTIME_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json
 ```
 
-SenseVoice.cpp 自带 Silero-VAD；默认使用最多 4 个线程，可通过 `ZCODE_VOICE_THREADS` 调整。CAM++ adapter 默认空闲 30 秒后自动关闭，可通过 `ZCODE_CAMPP_IDLE_MS` 调整。
+模型默认目录是 `~/.zcode/voice-transcriber/models/`，运行时默认目录是 `~/.zcode/voice-transcriber/runtimes/<platform>-<arch>/`。
 
-也可以在 ZCode 插件配置中填写“模型下载 manifest”。插件安装后不主动占用网络；第一次真正转写时才下载缺失模型。下载地址必须是项目方提供的 GitHub Release 或 raw 文件地址，模型授权和发布由项目方负责。
+## 开发
 
-运行时 manifest 同样是可选配置。只有找不到本地或插件内的 SenseVoice/CAM++ runtime 时，插件才会下载当前平台文件到本地数据目录；下载后会校验 SHA256，闲置时 CAM++ 进程仍会自动释放。
+在插件目录外执行：
 
-CAM++ adapter 接入前，转写仍可运行，但会明确标记说话人识别未配置；不会生成伪造声纹。摘要、会议纪要和调研分析由 ZCode Agent 完成，本插件不内置摘要大模型。
-
-构建当前平台的 CAM++ native adapter：
-
-```text
-npm run build:campp
+```bash
+npm run test:voice-transcriber
+npm run validate
 ```
 
-构建过程会临时下载 3D-Speaker、ONNX Runtime 和 nlohmann/json，模型文件仍由用户通过 GitHub Release manifest 下载。
+native runtime 构建：
 
-在 native sidecar 尚未安装时，MCP 工具会返回明确的运行时缺失错误；工具列表和插件加载不依赖模型文件。
-
-## ZCode 组件
-
-- `/transcribe-audio <audio-file>`：转写本地录音
-- `voice-transcriber` MCP：提供转写、修正、注册、查询和回滚
-- `voice-transcription` Skill：指导 Agent 使用本地引擎和增量学习
-
-## 数据位置
-
-默认位于：
-
-```text
-~/.zcode/voice-transcriber/
+```bash
+npm run build:sensevoice -- --ref main
+npm run build:campp -- --ref main
 ```
 
-可通过 `ZCODE_VOICE_DATA_DIR` 覆盖。声纹向量正式接入后需要改为加密存储。
+模型清单生成：
 
-## 性能基准
-
-对真实本地音频运行：
-
-```text
-npm run bench:voice-transcriber -- /absolute/path/to/meeting.wav
+```bash
+node tools/create-model-manifest.mjs \
+  --input /path/to/model-assets \
+  --version models-v0.1.0 \
+  --repository OWNER/REPO \
+  --asset-prefix models- \
+  --optional cam++.onnx \
+  --output model-manifest.json
 ```
 
-基准工具会用临时数据目录测量首次推理和缓存命中耗时，不会覆盖正式的本地档案。
+更多说明见 [`docs/voice-transcriber/`](../../docs/voice-transcriber/)。

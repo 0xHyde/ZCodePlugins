@@ -53,3 +53,30 @@ test("model bootstrap downloads and verifies a GitHub manifest exactly once", as
     await fs.rm(dataRoot, { recursive: true, force: true });
   }
 });
+
+test("model bootstrap rejects a downloaded file with the wrong declared size", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-model-bootstrap-size-"));
+  const payload = Buffer.from("fake model");
+  const checksum = crypto.createHash("sha256").update(payload).digest("hex");
+  const manifestUrl = "https://raw.githubusercontent.com/example/models/main/model-manifest.json";
+  const manifest = {
+    version: "test-size-1",
+    baseUrl: "https://github.com/example/models/releases/download/test-size-1/",
+    files: [{ name: "sense-voice-small-q8_0.gguf", sha256: checksum, size: payload.length + 1, required: true }],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => url === manifestUrl
+    ? { ok: true, status: 200, json: async () => manifest }
+    : { ok: true, status: 200, body: Readable.toWeb(Readable.from([payload])) };
+
+  try {
+    await assert.rejects(
+      () => ensureModels({ dataRoot, manifestUrl }),
+      (error) => error.code === "model_size_mismatch",
+    );
+    assert.equal(await fs.access(path.join(dataRoot, "models", "sense-voice-small-q8_0.gguf")).then(() => true).catch(() => false), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
+});
