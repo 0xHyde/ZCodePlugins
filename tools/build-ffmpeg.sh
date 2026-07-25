@@ -80,7 +80,12 @@ else
 fi
 
 ./configure "${configure_args[@]}"
-make -j"$build_jobs" ffmpeg
+if [[ "$runtime_platform" == "win32" ]]; then
+  make_target="ffmpeg.exe"
+else
+  make_target="ffmpeg"
+fi
+make -j"$build_jobs" "$make_target"
 
 mkdir -p "$output_root"
 if [[ "$runtime_platform" == "win32" ]]; then
