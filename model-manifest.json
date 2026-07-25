@@ -15,10 +15,13 @@
     },
     {
       "name": "fsmn-vad.gguf",
-      "url": "https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf?download=true",
+      "url": "https://www.modelscope.cn/models/FunAudioLLM/fsmn-vad-GGUF/resolve/master/fsmn-vad.gguf",
+      "urls": [
+        "https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf?download=true"
+      ],
       "sha256": "1270f2559c495f4e7b6e739541151027d360761a3fda43fc147034f5719f5479",
       "size": 1720512,
-      "required": false,
+      "required": true,
       "license": "upstream model terms",
       "source": "FunAudioLLM/fsmn-vad-GGUF"
     },

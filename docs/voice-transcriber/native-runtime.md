@@ -4,7 +4,7 @@
 
 ## 运行时方案
 
-- SenseVoiceSmall GGUF：SenseVoice.cpp，内置 Silero-VAD
+- SenseVoiceSmall GGUF：QwenAudio 官方 llama.cpp runtime，配合官方 FSMN-VAD
 - CAM++：3D-Speaker 导出的 ONNX，使用 ONNX Runtime
 - 聚类、缓存、增量学习：C++ 或 Rust 实现；Node 版用于开发和协议测试
 - 通信：JSON Lines over stdin/stdout
@@ -15,10 +15,10 @@
 node scripts/voice-engine.mjs --stdio
 ```
 
-构建 SenseVoice.cpp：
+构建官方 SenseVoice runtime：
 
 ```bash
-npm run build:sensevoice -- --ref main
+npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9
 ```
 
 构建脚本只编译运行时，不下载模型；正式发布应将 `--ref` 固定到经过验证的提交或版本。
@@ -28,7 +28,7 @@ npm run build:sensevoice -- --ref main
 SenseVoice 运行时会优先自动查找插件内的：
 
 ```text
-bin/<platform>/<arch>/sense-voice-main[.exe]
+bin/<platform>/<arch>/llama-funasr-sensevoice[.exe]
 ```
 
 找不到时再使用 `ZCODE_SENSEVOICE_BINARY` 或系统 `PATH`。因此发布包只需要把对应平台的运行时放到自己的目录，不需要修改 JavaScript 代码。
@@ -75,9 +75,11 @@ SenseVoice 命令可以输出纯文本，也可以输出 `{ "text": "...", "segm
 ## 模型配置
 
 ```text
-ZCODE_SENSEVOICE_BINARY=sense-voice-main
+ZCODE_SENSEVOICE_BINARY=llama-funasr-sensevoice
 ZCODE_SENSEVOICE_MODEL=/path/to/sense-voice-small-q8_0.gguf
 ZCODE_FSMN_VAD_MODEL=/path/to/fsmn-vad.gguf
+# 常见个人电脑默认 4 个推理线程；可按 CPU 调整
+ZCODE_VOICE_THREADS=4
 ZCODE_CAMPP_MODEL=/path/to/campp.onnx
 ZCODE_CAMPP_COMMAND=/absolute/path/to/campp-adapter
 ZCODE_CAMPP_ARGS='["--model","/path/to/campp.onnx"]'
@@ -90,7 +92,7 @@ ZCODE_CAMPP_ARGS='["--model","/path/to/campp.onnx"]'
 
 SenseVoice 子进程在单次转写结束后退出，释放模型内存；CAM++ adapter 为减少重复加载默认常驻，空闲 30 秒后自动退出。
 
-SenseVoice.cpp 只直接处理 16kHz、单声道、16-bit WAV。插件会优先复用符合条件的 WAV；对 MP3、M4A 和其他 WAV，调用本地 `ffmpeg` 转换，任务结束后删除临时 WAV。发布包应将对应平台的 `ffmpeg` 放入 `bin/<platform>/<arch>/`，或使用 `ZCODE_AUDIO_CONVERTER` 指定路径。
+官方 runtime 只直接处理 16kHz、单声道、16-bit WAV。插件会优先复用符合条件的 WAV；对 MP3、M4A 和其他 WAV，调用本地 `ffmpeg` 转换，任务结束后删除临时 WAV。发布包应将对应平台的 `ffmpeg` 放入 `bin/<platform>/<arch>/`，或使用 `ZCODE_AUDIO_CONVERTER` 指定路径。
 
 ## 性能约束
 

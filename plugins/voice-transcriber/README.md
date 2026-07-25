@@ -31,7 +31,8 @@ ZCode 的全本地录音转写插件，面向会议、访谈和调研场景。
 ```text
 ZCODE_SENSEVOICE_MODEL=/path/to/sense-voice-small-q8_0.gguf
 ZCODE_CAMPP_MODEL=/path/to/cam++.onnx
-ZCODE_SENSEVOICE_BINARY=sense-voice-main
+ZCODE_SENSEVOICE_BINARY=llama-funasr-sensevoice
+ZCODE_VOICE_THREADS=4
 ZCODE_CAMPP_COMMAND=/path/to/campp-adapter
 ZCODE_AUDIO_CONVERTER=ffmpeg
 ZCODE_VOICE_MODEL_MANIFEST_URL=https://raw.githubusercontent.com/0xHyde/ZCodePlugins/main/model-manifest.json
@@ -52,7 +53,7 @@ npm run validate
 native runtime 构建：
 
 ```bash
-npm run build:sensevoice -- --ref main
+npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9
 npm run build:campp -- --ref main
 ```
 

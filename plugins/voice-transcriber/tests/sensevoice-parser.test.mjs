@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseSenseVoiceOutput } from "../scripts/sensevoice-parser.mjs";
 
-test("SenseVoice.cpp output keeps timestamps and removes metadata tags", () => {
+test("official SenseVoice runtime output keeps timestamps and removes metadata tags", () => {
   const result = parseSenseVoiceOutput([
     "sense_voice_model_load: loading model",
     "[1.12-3.42] <|zh|><|NEUTRAL|><|Speech|>大家好",

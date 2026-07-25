@@ -76,7 +76,7 @@ npm run bench:voice-transcriber -- /absolute/path/to/meeting.wav
 构建当前平台 native runtime：
 
 ```bash
-npm run build:sensevoice -- --ref main
+npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9
 npm run build:campp -- --ref main
 ```
 

@@ -22,8 +22,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Build SenseVoice.cpp runtime
-        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'main' }} --jobs 2
+      - name: Build official SenseVoice runtime
+        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --jobs 2
 
       - name: Build CAM++ ONNX Runtime adapter
         run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2
@@ -37,7 +37,7 @@ jobs:
 
       - name: Verify Windows runtime files
         run: |
-          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/sense-voice-main.exe")) { throw "SenseVoice runtime missing" }
+          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/llama-funasr-sensevoice.exe")) { throw "SenseVoice runtime missing" }
           if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/campp-adapter.exe")) { throw "CAM++ adapter missing" }
           if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/onnxruntime.dll")) { throw "ONNX Runtime DLL missing" }
           $request = '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}'

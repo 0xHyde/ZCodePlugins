@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 
 const defaultFiles = [
   { name: "sense-voice-small-q8_0.gguf", required: true },
-  { name: "fsmn-vad.gguf", required: false },
+  { name: "fsmn-vad.gguf", required: true },
   { name: "cam++.onnx", required: false },
 ];
 

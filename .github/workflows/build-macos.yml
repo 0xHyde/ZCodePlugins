@@ -22,8 +22,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Build SenseVoice.cpp runtime
-        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'main' }} --jobs 2
+      - name: Build official SenseVoice runtime
+        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --jobs 2
 
       - name: Build CAM++ ONNX Runtime adapter
         run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || 'main' }} --ort-version 1.12.0 --jobs 2
@@ -35,7 +35,7 @@ jobs:
 
       - name: Verify macOS runtime files
         run: |
-          test -x plugins/voice-transcriber/bin/darwin/arm64/sense-voice-main
+          test -x plugins/voice-transcriber/bin/darwin/arm64/llama-funasr-sensevoice
           test -x plugins/voice-transcriber/bin/darwin/arm64/campp-adapter
           test -f plugins/voice-transcriber/bin/darwin/arm64/libonnxruntime.1.12.0.dylib
           printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}' \

@@ -1,6 +1,6 @@
 {
   "name": "voice-transcriber",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "本地录音转写、说话人识别与可回滚的无感声纹学习",
   "author": {
     "name": "ZCodePlugins"
@@ -22,7 +22,7 @@
     },
     "fsmn_vad_model": {
       "title": "备用 VAD 模型",
-      "description": "仅供替代 SenseVoice.cpp 的其他后端使用；SenseVoice.cpp 自带 Silero-VAD，可留空",
+      "description": "官方 FSMN-VAD GGUF，用于得到语音片段时间范围；模型 manifest 会自动下载，可留空",
       "type": "file",
       "default": ""
     },
@@ -34,13 +34,13 @@
     },
     "sensevoice_binary": {
       "title": "SenseVoice 本地运行时",
-      "description": "SenseVoice.cpp 可执行文件路径或 PATH 中的命令名",
+      "description": "官方 QwenAudio llama.cpp runtime 路径或 PATH 中的命令名",
       "type": "string",
-      "default": "sense-voice-main"
+      "default": "llama-funasr-sensevoice"
     },
     "audio_converter": {
       "title": "本地音频转换器",
-      "description": "用于将 MP3、M4A 等音频转换为 SenseVoice.cpp 所需的 16kHz WAV；可留空自动查找 ffmpeg",
+      "description": "用于将 MP3、M4A 等音频转换为 runtime 所需的 16kHz WAV；可留空自动查找 ffmpeg",
       "type": "string",
       "default": "ffmpeg"
     },
@@ -60,7 +60,7 @@
       "title": "运行时下载 manifest",
       "description": "可选的 GitHub Release 运行时清单；找不到平台二进制时自动下载",
       "type": "string",
-      "default": "https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json"
+      "default": "https://github.com/0xHyde/ZCodePlugins/releases/download/v0.2.0/runtime-manifest.json"
     }
   }
 }

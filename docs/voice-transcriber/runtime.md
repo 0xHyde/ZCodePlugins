@@ -11,8 +11,8 @@
     "win32-x64": {
       "files": [
         {
-          "name": "sense-voice-main.exe",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.1.0/sense-voice-main.exe",
+          "name": "llama-funasr-sensevoice.exe",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.1.0/llama-funasr-sensevoice.exe",
           "sha256": "...",
           "required": true
         },

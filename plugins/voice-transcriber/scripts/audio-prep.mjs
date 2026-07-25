@@ -77,7 +77,7 @@ export async function prepareAudio({ audioPath, dataRoot, taskId, converter = pr
     configured: converter,
     defaultName: "ffmpeg",
   });
-  if (!runtime.exists) throw fail("当前录音不是 SenseVoice.cpp 可直接处理的 16kHz 单声道 WAV，且找不到本地 ffmpeg。请安装 ffmpeg 或将其放入插件 bin/<platform>/<arch>/。", "audio_converter_not_found");
+  if (!runtime.exists) throw fail("当前录音不是官方 SenseVoice runtime 可直接处理的 16kHz 单声道 WAV，且找不到本地 ffmpeg。请安装 ffmpeg 或将其放入插件 bin/<platform>/<arch>/。", "audio_converter_not_found");
 
   const directory = path.join(dataRoot || os.tmpdir(), "tmp-audio");
   await fs.mkdir(directory, { recursive: true });

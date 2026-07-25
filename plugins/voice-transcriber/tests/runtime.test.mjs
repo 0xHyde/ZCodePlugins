@@ -7,14 +7,14 @@ import { bundledRuntimeCandidates, commandAvailable, resolveRuntimeCommand } fro
 
 test("runtime resolver prefers a bundled platform binary", async () => {
   const pluginRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-runtime-"));
-  const candidate = bundledRuntimeCandidates(pluginRoot, "sense-voice-main")[0];
+  const candidate = bundledRuntimeCandidates(pluginRoot, "llama-funasr-sensevoice")[0];
   await fs.mkdir(path.dirname(candidate), { recursive: true });
   await fs.writeFile(candidate, "binary placeholder");
 
   const result = await resolveRuntimeCommand({
     pluginRoot,
-    configured: "sense-voice-main",
-    defaultName: "sense-voice-main",
+    configured: "llama-funasr-sensevoice",
+    defaultName: "llama-funasr-sensevoice",
   });
   assert.equal(result.command, candidate);
   assert.equal(result.source, "bundled");
@@ -28,7 +28,7 @@ test("runtime resolver reports an unavailable command without throwing", async (
   const result = await resolveRuntimeCommand({
     pluginRoot,
     configured: "definitely-not-installed-zcode-runtime",
-    defaultName: "sense-voice-main",
+    defaultName: "llama-funasr-sensevoice",
   });
   assert.equal(result.command, "definitely-not-installed-zcode-runtime");
   assert.equal(result.exists, false);

@@ -11,7 +11,7 @@ test("runtime bootstrap downloads, verifies, and reuses a platform pack", async 
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-runtime-bootstrap-"));
   const manifestUrl = "https://raw.githubusercontent.com/example/runtime/main/runtime-manifest.json";
   const payloads = {
-    "sense-voice-main.exe": Buffer.from("sensevoice runtime"),
+    "llama-funasr-sensevoice.exe": Buffer.from("sensevoice runtime"),
     "campp-adapter.exe": Buffer.from("campp runtime"),
   };
   const manifest = {
@@ -43,7 +43,7 @@ test("runtime bootstrap downloads, verifies, and reuses a platform pack", async 
     const first = await ensureRuntime({ dataRoot, manifestUrl, platform: "win32", arch: "x64" });
     assert.equal(first.ready, true);
     assert.deepEqual(first.downloaded.sort(), Object.keys(payloads).sort());
-    assert.equal(await fs.readFile(path.join(runtimeDataDir(dataRoot, "win32", "x64"), "sense-voice-main.exe"), "utf8"), "sensevoice runtime");
+    assert.equal(await fs.readFile(path.join(runtimeDataDir(dataRoot, "win32", "x64"), "llama-funasr-sensevoice.exe"), "utf8"), "sensevoice runtime");
 
     assert.equal(runtimePlatformKey("win32", "x64"), "win32-x64");
 

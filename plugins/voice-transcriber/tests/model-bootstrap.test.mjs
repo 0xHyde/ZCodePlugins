@@ -12,7 +12,7 @@ test("model bootstrap reports missing models without a configured manifest", asy
   const result = await ensureModels({ dataRoot });
 
   assert.equal(result.ready, false);
-  assert.deepEqual(result.missing, ["sense-voice-small-q8_0.gguf"]);
+  assert.deepEqual(result.missing, ["sense-voice-small-q8_0.gguf", "fsmn-vad.gguf"]);
   assert.match(result.modelDir, /models$/);
 
   await fs.rm(dataRoot, { recursive: true, force: true });

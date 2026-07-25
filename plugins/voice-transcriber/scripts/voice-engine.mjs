@@ -100,7 +100,7 @@ async function resolveBackendRuntime(commandEnv, defaultName, { bootstrap = fals
 }
 
 async function resolveSenseVoiceRuntime(options = {}) {
-  return resolveBackendRuntime("ZCODE_SENSEVOICE_BINARY", "sense-voice-main", options);
+  return resolveBackendRuntime("ZCODE_SENSEVOICE_BINARY", "llama-funasr-sensevoice", options);
 }
 
 async function resolveCamppRuntime(options = {}) {
@@ -390,23 +390,11 @@ async function runSenseVoice(audioPath, options = {}) {
   }
   const model = modelInfo.path;
   const binary = runtime.command;
-  const threadCount = Math.max(1, Number(process.env.ZCODE_VOICE_THREADS || Math.min(4, os.cpus().length || 1)));
-  const args = ["-m", model, "-f", audioPath, "-t", String(threadCount)];
-  if (options.language && options.language !== "auto") args.push("-l", String(options.language));
-  if (process.env.ZCODE_SENSEVOICE_ITN !== "0") args.push("-itn");
-  if (process.env.ZCODE_SENSEVOICE_PREFIX === "1") args.push("-prefix");
-  const forceCpu = process.env.ZCODE_SENSEVOICE_NO_GPU === "1";
-  let device = forceCpu ? "cpu" : "metal-or-cpu";
-  let result;
-  try {
-    result = await runCommand(binary, forceCpu ? [...args, "-ng"] : args);
-  } catch (error) {
-    const canFallback = !forceCpu && process.env.ZCODE_SENSEVOICE_CPU_FALLBACK !== "0";
-    const gpuFailure = /Metal|GPU|allocate buffer|failed to initialize sense voice context/i.test(error.message);
-    if (!canFallback || !gpuFailure) throw error;
-    result = await runCommand(binary, [...args, "-ng"]);
-    device = "cpu-fallback";
-  }
+  const vadInfo = await resolveModel("ZCODE_FSMN_VAD_MODEL", "fsmn-vad.gguf");
+  const args = ["-m", model, "-a", audioPath];
+  if (vadInfo.exists) args.push("--vad", vadInfo.path);
+  const result = await runCommand(binary, args);
+  const device = "cpu";
   const stdout = result.stdout.trim();
   const raw = `${result.stdout}\n${result.stderr}`.trim();
   let parsed = null;
@@ -427,7 +415,14 @@ async function runSenseVoice(audioPath, options = {}) {
     : parseSenseVoiceOutput(raw);
   const text = String(parsedOutput.text || segments?.map((segment) => segment.text).join(" ") || raw).trim();
   if (!text) throw fail("SenseVoice 没有返回文字结果。", "empty_transcription");
-  return { text, segments: parsedOutput.segments || segments, backend: "sensevoice.cpp", model, threads: threadCount, device };
+  return {
+    text,
+    segments: parsedOutput.segments || segments,
+    backend: "qwen-audio-sensevoice",
+    model,
+    vadModel: vadInfo.exists ? vadInfo.path : null,
+    device,
+  };
 }
 
 function makeSegments(text) {
