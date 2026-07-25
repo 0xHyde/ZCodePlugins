@@ -1,29 +1,44 @@
-# 发布布局与清单
+# 发布布局与验收
 
-## Native binaries
-
-按平台放置 `voice-engine`：
+## 支持平台
 
 ```text
-bin/darwin/arm64/sense-voice-main
-bin/darwin/arm64/campp-adapter
-bin/darwin/arm64/libonnxruntime.1.12.0.dylib
+darwin-arm64
+win32-x64
 ```
 
-Windows 采用相同目录约定，并放置对应的 `.exe` 和 `.dll`；也可以通过
-`ZCODE_VOICE_ENGINE`、`ZCODE_SENSEVOICE_BINARY` 或 `ZCODE_CAMPP_COMMAND` 指定自定义路径。
+每个平台的 runtime 包含：
 
-SenseVoice 子运行时默认放在同一平台目录下，文件名为 `sense-voice-main`（Windows 为 `.exe`）；CAM++ adapter 默认文件名为 `campp-adapter`（Windows 为 `.exe`），并随同目录放置 ONNX Runtime 动态库，也可以通过环境变量覆盖。
+```text
+llama-funasr-sensevoice[.exe]
+campp-adapter[.exe]
+ffmpeg[.exe]
+ONNX Runtime 动态库
+FFMPEG_LICENSE.txt
+```
 
-二进制不提交到 Git；发布时由对应平台的打包流程注入。
+模型不进入插件包或 runtime 包。Release 同时发布：
 
-## 当前发布阻塞项
+- `runtime-manifest.json`
+- `model-manifest.json`
+- 两个平台的 runtime zip
+- 可供 manifest 单文件下载的 runtime 资产
+- `voice-transcriber-plugin-v0.2.0.zip`
 
-- 已完成：`v0.1.0` 发布 Windows x64 与 macOS arm64 runtime、合并后的 `runtime-manifest.json`、SHA256 和版本号。
-- P0：确认模型来源和许可证后，发布独立的 `model-manifest.json`；模型权重不进入插件仓库或 runtime Release。
-- P0：在 Windows 上用真实 SenseVoice Q8、CAM++ 模型和会议录音完成端到端验收；当前 CI 已验证编译、启动、测试和打包，但没有把模型放入 CI。
-- P0：确认 ZCode Marketplace 安装流程能够读取 runtime manifest，并在首次转写时自动下载缺失 runtime；模型下载等模型清单发布后再启用。
-- P1：确认 Windows 用户没有 ffmpeg 时的自动发现、清晰提示或 ZCode 提供的音频转换能力。
-- P1：在常见 CPU / 内存档位上记录冷启动、实时率、内存和长录音稳定性。
-- P1：增加声纹档案加密、文件权限、数据删除和版本迁移。
-- P1：完成模型/运行时许可证、代码签名和正式 Marketplace 发布验收。
+## 发布流程
+
+1. 统一 Marketplace、插件 manifest 和 package 版本；
+2. 运行 JavaScript 测试和插件校验；
+3. 在 GitHub Actions 分别构建 Windows x64 与 macOS arm64；
+4. 验证 SenseVoice、CAM++ 和 ffmpeg 可启动；
+5. 生成并合并平台 runtime manifest；
+6. 发布 GitHub Release，并从公开 URL 回读 manifest 和资产。
+
+macOS ARM 使用 native 优化构建；Windows 使用可移植 CPU 构建，避免把 GitHub runner 的指令集要求带到用户电脑。
+
+## 发布边界
+
+- 推理、说话人档案和全文均保存在本地；
+- FFmpeg 作为独立进程随 runtime 分发，许可证随包提供；
+- 当前未提供商业代码签名或 macOS notarization；
+- Linux 暂不发布。

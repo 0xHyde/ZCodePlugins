@@ -1,11 +1,11 @@
 {
-  "name": "zcode-plugins-local",
-  "description": "本地 ZCode 插件集合",
+  "name": "zcode-plugins",
+  "description": "ZCode 本地能力插件市场",
   "pluginRoot": ".",
   "plugins": [
     {
       "name": "voice-transcriber",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "本地录音转写、说话人识别与可回滚的无感声纹学习",
       "source": "./plugins/voice-transcriber",
       "category": "Audio",

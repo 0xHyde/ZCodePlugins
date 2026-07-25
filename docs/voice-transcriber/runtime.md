@@ -6,25 +6,31 @@
 
 ```json
 {
-  "version": "v0.1.0",
+  "version": "v0.2.0",
   "platforms": {
     "win32-x64": {
       "files": [
         {
-          "name": "sense-voice-main.exe",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.1.0/sense-voice-main.exe",
+          "name": "llama-funasr-sensevoice.exe",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-llama-funasr-sensevoice.exe",
           "sha256": "...",
           "required": true
         },
         {
           "name": "campp-adapter.exe",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.1.0/campp-adapter.exe",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-campp-adapter.exe",
           "sha256": "...",
           "required": true
         },
         {
           "name": "onnxruntime.dll",
-          "url": "https://github.com/OWNER/REPO/releases/download/v0.1.0/onnxruntime.dll",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-onnxruntime.dll",
+          "sha256": "...",
+          "required": true
+        },
+        {
+          "name": "ffmpeg.exe",
+          "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/win32-x64-ffmpeg.exe",
           "sha256": "...",
           "required": true
         }

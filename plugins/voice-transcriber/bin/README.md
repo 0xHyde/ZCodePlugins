@@ -1,6 +1,6 @@
 # Platform runtimes
 
-Release packages place `sense-voice-main`, `campp-adapter`, and the matching
+Release packages place `llama-funasr-sensevoice`, `campp-adapter`, and the matching
 ONNX Runtime dynamic library under `bin/<platform>/<arch>/`. Development builds
 are generated with `npm run build:sensevoice` and `npm run build:campp`.
 

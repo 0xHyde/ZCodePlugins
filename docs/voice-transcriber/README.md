@@ -1,13 +1,10 @@
 # voice-transcriber 文档
 
-这里集中放置不参与 ZCode 插件加载的设计、模型、运行时和发布资料。
+`voice-transcriber` 是一个纯 MCP 形态的 ZCode 本地插件。正式版 `v0.2.0` 支持 Windows x64 和 macOS arm64。
 
-- [native runtime 与 CAM++ adapter](native-runtime.md)
-- [模型清单与管理](models.md)
-- [跨平台发布布局](release.md)
+- [`models.md`](models.md)：模型选择、来源和下载策略
+- [`native-runtime.md`](native-runtime.md)：本地 runtime、性能与资源生命周期
+- [`runtime.md`](runtime.md)：runtime manifest 格式和安装目录
+- [`release.md`](release.md)：发布资产和验收要求
 
-## 发布状态
-
-当前 `v0.1.0` 已发布 Windows x64 与 macOS arm64 runtime。MCP 工具、任务缓存、说话人修正、无感注册、自动匹配和回滚已经具备；真实模型端到端质量/性能验收、模型下载源、代码签名和声纹数据保护仍需继续完善。
-
-插件只负责本地音频理解。会议摘要、纪要、行动项和调研分析由 ZCode Agent 使用转写产物完成，不在插件内重复引入大模型。
+用户侧的简明安装说明见插件目录的 [`README.md`](../../plugins/voice-transcriber/README.md)。

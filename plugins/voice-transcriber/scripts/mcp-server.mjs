@@ -1,9 +1,11 @@
 import readline from "node:readline";
+import fs from "node:fs/promises";
 import { SidecarClient } from "./sidecar.mjs";
 
+const pluginPackage = JSON.parse(await fs.readFile(new URL("../package.json", import.meta.url), "utf8"));
 const serverInfo = {
   name: "voice-transcriber",
-  version: "0.1.0",
+  version: pluginPackage.version,
 };
 
 const tools = [

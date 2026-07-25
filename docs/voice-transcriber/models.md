@@ -12,10 +12,11 @@
 ```text
 ~/.zcode/voice-transcriber/models/
 ├── sense-voice-small-q8_0.gguf
+├── fsmn-vad.gguf
 └── cam++.onnx
 ```
 
-SenseVoice 是必需模型。CAM++ 只在需要说话人识别、注册和自动匹配时使用，可以作为可选文件。
+SenseVoice 和 FSMN-VAD 是必需模型。CAM++ 用于说话人识别、注册和自动匹配；它下载失败时不会阻塞纯转写。
 
 ## Manifest 格式
 
@@ -23,8 +24,8 @@ SenseVoice 是必需模型。CAM++ 只在需要说话人识别、注册和自动
 
 ```json
 {
-  "version": "models-v0.1.0",
-  "baseUrl": "https://github.com/OWNER/REPO/releases/download/models-v0.1.0/",
+  "version": "models-v0.2.0",
+  "baseUrl": "https://github.com/OWNER/REPO/releases/download/models-v0.2.0/",
   "files": [
     {
       "name": "sense-voice-small-q8_0.gguf",
@@ -65,7 +66,7 @@ SenseVoice 是必需模型。CAM++ 只在需要说话人识别、注册和自动
 ```bash
 node tools/create-model-manifest.mjs \
   --input /path/to/model-assets \
-  --version models-v0.1.0 \
+  --version models-v0.2.0 \
   --repository OWNER/REPO \
   --asset-prefix models- \
   --optional cam++.onnx \
@@ -75,15 +76,15 @@ node tools/create-model-manifest.mjs \
 如果使用 GitHub 镜像，将带 `models-` 前缀的模型资产和 `model-manifest.json` 一起上传到对应 GitHub Release；也可以直接使用仓库内的默认清单：
 
 ```text
-ZCODE_VOICE_MODEL_MANIFEST_URL=https://raw.githubusercontent.com/0xHyde/ZCodePlugins/main/model-manifest.json
+ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.2.0/model-manifest.json
 ```
 
-默认清单已经接入官方来源；下载时仍会校验 SHA256 和文件大小。模型卡片和许可证以各上游仓库为准，项目不重新分发模型权利。SenseVoice、FSMN-VAD 和 CAM++ 的来源记录在仓库根目录 [`model-manifest.json`](../../model-manifest.json)。
+默认清单已经接入 FunAudioLLM 官方来源；三个模型均标记为 Apache-2.0。下载时仍会校验 SHA256 和文件大小，项目只发布清单，不重新托管模型权重。SenseVoice、FSMN-VAD 和 CAM++ 的来源记录在仓库根目录 [`model-manifest.json`](../../model-manifest.json)。
 
 ## Runtime manifest
 
 运行时清单和模型清单分开：runtime manifest 管理可执行文件和动态库，model manifest 管理模型权重。当前正式 runtime manifest：
 
 ```text
-https://github.com/0xHyde/ZCodePlugins/releases/download/v0.1.0/runtime-manifest.json
+https://github.com/0xHyde/ZCodePlugins/releases/download/v0.2.0/runtime-manifest.json
 ```

@@ -11,3 +11,11 @@ build dependencies and are not bundled into the plugin source tree.
 The CAM++ model is a separate user-downloaded artifact. A release must publish
 its exact model license and SHA256 in the GitHub Release manifest before enabling
 automatic download.
+
+## FFmpeg
+
+Release runtime packages include a separate minimal FFmpeg executable built
+from the official `n7.1.1` source without GPL or nonfree external libraries.
+FFmpeg is invoked as an external process for local audio format conversion.
+The LGPL-2.1-or-later license is distributed as `FFMPEG_LICENSE.txt`, and the
+corresponding official source archive is attached to the GitHub Release.

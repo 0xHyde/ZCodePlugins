@@ -12,6 +12,7 @@ const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pluginRoot = path.join(root, "plugins", "voice-transcriber");
 const sourceRepository = "https://github.com/modelscope/3D-Speaker.git";
+const defaultRef = "065629c313eaf1a01c65c640c46d77e61e9607b4";
 const nlohmannHeaderUrl = "https://raw.githubusercontent.com/nlohmann/json/v3.11.3/single_include/nlohmann/json.hpp";
 const ortVersion = option("ort-version", process.env.ZCODE_ONNXRUNTIME_VERSION || "1.12.0");
 
@@ -109,7 +110,7 @@ async function extractArchive(archive, destination) {
 
 const packageInfo = platformPackage();
 const output = path.resolve(option("output", path.join(pluginRoot, "bin", process.platform, process.arch)));
-const ref = option("ref", process.env.ZCODE_3D_SPEAKER_REF || "main");
+const ref = option("ref", process.env.ZCODE_3D_SPEAKER_REF || defaultRef);
 const keepBuild = process.env.ZCODE_KEEP_BUILD === "1";
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "zcode-campp-build-"));
 const source = path.join(temporaryRoot, "3D-Speaker");
@@ -118,7 +119,11 @@ const ortRoot = path.join(temporaryRoot, "onnxruntime");
 const build = path.join(temporaryRoot, "build");
 
 try {
-  await run("git", ["clone", "--depth", "1", "--branch", ref, sourceRepository, source]);
+  await fs.mkdir(source, { recursive: true });
+  await run("git", ["init"], source);
+  await run("git", ["remote", "add", "origin", sourceRepository], source);
+  await run("git", ["fetch", "--depth", "1", "origin", ref], source);
+  await run("git", ["checkout", "--detach", "FETCH_HEAD"], source);
   const nlohmannHeader = path.join(source, "runtime", "onnxruntime", "third_party", "nlohmann_json-src", "include", "nlohmann", "json.hpp");
   if (!(await fs.stat(nlohmannHeader).catch(() => null))) {
     await fs.mkdir(path.dirname(nlohmannHeader), { recursive: true });

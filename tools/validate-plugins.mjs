@@ -37,7 +37,22 @@ for (const entry of marketplace.plugins) {
   const manifestPath = path.join(pluginPath, ".zcode-plugin", "plugin.json");
   const manifest = await readJson(manifestPath);
   if (manifest.name !== entry.name) throw new Error(`${manifestPath}: name does not match marketplace entry`);
+  if (manifest.version !== entry.version) throw new Error(`${manifestPath}: version does not match marketplace entry`);
   if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(manifest.name)) throw new Error(`${manifestPath}: invalid plugin name`);
+  if (!/^\d+\.\d+\.\d+$/.test(manifest.version || "")) throw new Error(`${manifestPath}: invalid semantic version`);
+
+  const packagePath = path.join(pluginPath, "package.json");
+  if (await exists(packagePath)) {
+    const packageJson = await readJson(packagePath);
+    if (packageJson.version !== manifest.version) throw new Error(`${packagePath}: version does not match plugin manifest`);
+  }
+
+  for (const key of ["model_manifest_url", "runtime_manifest_url"]) {
+    const value = manifest.userConfig?.[key]?.default;
+    if (!value || !value.includes(`/v${manifest.version}/`)) {
+      throw new Error(`${manifestPath}: ${key} must point to the matching immutable release`);
+    }
+  }
 
   const mcpPath = path.join(pluginPath, ".mcp.json");
   if (await exists(mcpPath)) {
