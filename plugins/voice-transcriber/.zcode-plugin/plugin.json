@@ -1,6 +1,6 @@
 {
   "name": "voice-transcriber",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "本地录音转写、说话人识别与可回滚的无感声纹学习",
   "author": {
     "name": "ZCodePlugins"
@@ -56,7 +56,7 @@
       "title": "模型下载 manifest",
       "description": "通常无需修改；首次转写时自动下载本地模型",
       "type": "string",
-      "default": "https://github.com/0xHyde/ZCodePlugins/releases/download/v0.3.2/model-manifest.json"
+      "default": "https://github.com/0xHyde/ZCodePlugins/releases/download/v0.3.3/model-manifest.json"
     }
   }
 }

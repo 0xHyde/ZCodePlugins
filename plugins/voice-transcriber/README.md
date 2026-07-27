@@ -45,7 +45,7 @@ ZCODE_VOICE_THREADS=4
 发布版模型 manifest：
 
 ```text
-https://github.com/0xHyde/ZCodePlugins/releases/download/v0.3.2/model-manifest.json
+https://github.com/0xHyde/ZCodePlugins/releases/download/v0.3.3/model-manifest.json
 ```
 
 MCP 采用异步任务接口：`start_transcription` 创建任务，`get_transcription_status` 查询阶段，`read_transcript` 分页读取全文。插件内置 `voice-transcription` Skill 负责自动完成这组调用。

@@ -32,7 +32,7 @@ const tools = [
   },
   {
     name: "get_transcription_status",
-    description: "查询本地转写任务状态和阶段。任务未完成时继续轮询，完成后使用 read_transcript。",
+    description: "查询本地转写任务状态和阶段。任务未完成时继续轮询；如果长录音中途失败但已有分块完成，partialAvailable 会为 true，可先用 read_transcript 读取已保存部分。",
     inputSchema: {
       type: "object",
       properties: { taskId: { type: "string" } },
@@ -42,7 +42,7 @@ const tools = [
   },
   {
     name: "read_transcript",
-    description: "分页读取已完成任务的完整转写，避免把长录音全文一次性塞入上下文。",
+    description: "分页读取转写结果，避免把长录音全文一次性塞入上下文；长录音中途失败时也可读取已保存的部分结果。",
     inputSchema: {
       type: "object",
       properties: {
