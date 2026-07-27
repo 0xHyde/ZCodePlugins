@@ -22,7 +22,7 @@ https://github.com/0xHyde/ZCodePlugins
 2. 校验文件大小和 SHA256 后保存到 ZCode 插件数据目录；
 3. 后续离线复用，不重复下载。
 
-当前修复版本：v0.3.2（待发布；Windows 长录音内存修复）
+当前修复版本：v0.3.3（Windows 长录音低内存修复）
 
 ## voice-transcriber
 
@@ -34,6 +34,8 @@ https://github.com/0xHyde/ZCodePlugins
 - 用户修正说话人后自动注册确认片段，支持回滚；
 - MCP 使用异步任务，长录音不会阻塞一次工具调用；
 - 完整全文保存在本地，ZCode 通过分页接口读取，不会丢失全文；
+- 长录音每个分块成功后立即保存部分结果，低内存失败时仍可读取已完成内容；
+- 完成后始终保存并返回 `transcript.txt` 全文文件，同时提供 JSON、Markdown、SRT/VTT（按配置）文件；
 - 不上传录音，不内置摘要大模型，纪要和后续分析由 ZCode 完成；
 - 转写结束后释放 SenseVoice，CAM++ 空闲 30 秒后退出。
 

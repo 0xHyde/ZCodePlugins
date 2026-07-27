@@ -236,11 +236,13 @@ async function writeArtifacts(task) {
     segments: task.segments,
   };
   await writeJson(path.join(directory, "transcript.json"), transcript);
+  await fs.writeFile(path.join(directory, "transcript.txt"), `${task.text || ""}\n`, "utf8");
   await fs.writeFile(path.join(directory, "transcript.md"), renderMarkdown(task), "utf8");
   if (task.options.outputFormat === "srt") await fs.writeFile(path.join(directory, "transcript.srt"), renderSubtitles(task, ","), "utf8");
   if (task.options.outputFormat === "vtt") await fs.writeFile(path.join(directory, "transcript.vtt"), `WEBVTT\n\n${renderSubtitles(task, ".")}`, "utf8");
   return {
     json: path.join(directory, "transcript.json"),
+    text: path.join(directory, "transcript.txt"),
     markdown: path.join(directory, "transcript.md"),
     ...(task.options.outputFormat === "srt" ? { srt: path.join(directory, "transcript.srt") } : {}),
     ...(task.options.outputFormat === "vtt" ? { vtt: path.join(directory, "transcript.vtt") } : {}),
@@ -454,9 +456,9 @@ async function runSenseVoice(audioPath, options = {}, onStage = null) {
   const model = modelInfo.path;
   const binary = runtime.command;
   const vadInfo = await resolveModel("ZCODE_FSMN_VAD_MODEL", "fsmn-vad.gguf");
-  const runSingle = async (inputPath, offsetSeconds = 0) => {
+  const runSingle = async (inputPath, offsetSeconds = 0, runOptions = {}) => {
     const args = ["-m", model, "-a", inputPath];
-    if (vadInfo.exists) args.push("--vad", vadInfo.path, "--vad-maxseg", "15000");
+    if (vadInfo.exists) args.push("--vad", vadInfo.path, "--vad-maxseg", String(runOptions.vadMaxSegMs || 15000));
     const result = await runCommand(binary, args);
     const device = "cpu";
     const stdout = result.stdout.trim();
@@ -500,29 +502,133 @@ async function runSenseVoice(audioPath, options = {}, onStage = null) {
   try {
     return await runSingle(audioPath);
   } catch (error) {
-    const isGgmlMemoryCrash = (error?.nativeExitCode === 3221226505 || error?.nativeExitCode === -1073740791)
-      && /GGML_ASSERT\(ctx\.mem_buffer != NULL\)|mem_buffer/i.test(error.nativeStderr || error.message || "");
+    const isGgmlMemoryCrash = isGgmlMemoryCrashError(error);
     if (!isGgmlMemoryCrash) throw error;
 
     await onStage?.("transcribing", 36, "长录音触发本地内存保护，正在自动分块重试。", { fallback: "chunked" });
-    const split = await splitAudio({ audioPath, dataRoot, taskId: options.taskId, chunkSeconds: 300 });
+    const initialChunkSeconds = chooseChunkSeconds();
+    const split = await splitAudio({ audioPath, dataRoot, taskId: options.taskId, chunkSeconds: initialChunkSeconds });
+    const allSegments = [];
+    const allTexts = [];
+    let completedChunks = 0;
+    let plannedChunks = split.chunks.length;
+    let firstResult = null;
+
+    const emitChunk = async (result, chunk) => {
+      if (!firstResult) firstResult = result;
+      const segments = result.segments?.length
+        ? result.segments
+        : [{ start: chunk.offset, end: null, text: result.text, speaker: "unknown", confidence: null }];
+      allSegments.push(...segments);
+      allTexts.push(result.text);
+      completedChunks += 1;
+      const stableSegments = reindexSegments(allSegments);
+      const percent = 38 + Math.floor((completedChunks / Math.max(1, plannedChunks)) * 28);
+      await onStage?.("transcribing", percent, `正在转写第 ${completedChunks}/${plannedChunks} 个音频分块。`, {
+        fallback: "chunked",
+        chunk: completedChunks,
+        chunks: plannedChunks,
+      });
+      await options.onChunk?.({
+        text: allTexts.join("\n"),
+        segments: stableSegments,
+        completedChunks,
+        totalChunks: plannedChunks,
+        chunkSeconds: chunk.chunkSeconds,
+      });
+    };
+
+    const processChunk = async (chunk, depth = 0) => {
+      try {
+        const result = await runSingle(chunk.path, chunk.offset, {
+          // Smaller VAD windows reduce the peak feature/graph allocation on
+          // machines that already needed the long-audio fallback.
+          vadMaxSegMs: 10000,
+        });
+        await emitChunk(result, chunk);
+        return;
+      } catch (chunkError) {
+        if (!isGgmlMemoryCrashError(chunkError) || chunk.chunkSeconds <= 60 || depth >= 2) {
+          chunkError.partialText = allTexts.join("\n");
+          chunkError.partialSegments = reindexSegments(allSegments);
+          chunkError.completedChunks = completedChunks;
+          chunkError.totalChunks = plannedChunks;
+          throw chunkError;
+        }
+        const smallerChunkSeconds = Math.max(60, Math.floor(chunk.chunkSeconds / 2));
+        await onStage?.("transcribing", 38 + Math.floor((completedChunks / Math.max(1, plannedChunks)) * 28), `第 ${completedChunks + 1} 个分块内存仍不足，正在切成更小分块重试。`, {
+          fallback: "chunked",
+          chunk: completedChunks + 1,
+          chunks: plannedChunks,
+          retryChunkSeconds: smallerChunkSeconds,
+        });
+        const nested = await splitAudio({
+          audioPath: chunk.path,
+          dataRoot,
+          taskId: `${options.taskId || "audio"}-retry-${depth}`,
+          chunkSeconds: smallerChunkSeconds,
+        });
+        plannedChunks += nested.chunks.length - 1;
+        try {
+          for (const subChunk of nested.chunks) {
+            await processChunk({
+              ...subChunk,
+              offset: chunk.offset + subChunk.offset,
+              chunkSeconds: smallerChunkSeconds,
+            }, depth + 1);
+            await waitForNativeRelease();
+          }
+        } finally {
+          await nested.cleanup();
+        }
+      }
+    };
+
     try {
-      const results = [];
-      for (const [index, chunk] of split.chunks.entries()) {
-        const percent = 38 + Math.floor((index / split.chunks.length) * 28);
-        await onStage?.("transcribing", percent, `正在转写第 ${index + 1}/${split.chunks.length} 个音频分块。`, { fallback: "chunked", chunk: index + 1, chunks: split.chunks.length });
-        results.push(await runSingle(chunk.path, chunk.offset));
+      for (const chunk of split.chunks) {
+        await processChunk({ ...chunk, chunkSeconds: initialChunkSeconds });
+        await waitForNativeRelease();
       }
       return {
-        ...results[0],
-        text: results.map((result) => result.text).filter(Boolean).join("\n"),
-        segments: results.flatMap((result) => result.segments || []),
-        warnings: [`长录音已自动分为 ${results.length} 个 5 分钟分块处理。`],
+        ...firstResult,
+        text: allTexts.filter(Boolean).join("\n"),
+        segments: reindexSegments(allSegments),
+        warnings: [`长录音已自动分为 ${completedChunks} 个分块处理（初始分块 ${initialChunkSeconds} 秒，内存不足时自动缩小）。`],
       };
     } finally {
       await split.cleanup();
     }
   }
+}
+
+const GB = 1024 ** 3;
+
+function chooseChunkSeconds() {
+  const configured = Number(process.env.ZCODE_VOICE_CHUNK_SECONDS);
+  if (Number.isFinite(configured) && configured >= 60) return Math.min(300, Math.floor(configured));
+  const freeMemory = os.freemem();
+  if (freeMemory < 6 * GB) return 90;
+  if (freeMemory < 10 * GB) return 120;
+  return 300;
+}
+
+function isGgmlMemoryCrashError(error) {
+  return (error?.nativeExitCode === 3221226505 || error?.nativeExitCode === -1073740791)
+    && /GGML_ASSERT\(ctx\.mem_buffer != NULL\)|mem_buffer/i.test(error.nativeStderr || error.message || "");
+}
+
+function reindexSegments(segments) {
+  return segments.map((segment, index) => ({
+    ...segment,
+    id: `seg_${String(index + 1).padStart(4, "0")}`,
+  }));
+}
+
+async function waitForNativeRelease() {
+  const configured = Number(process.env.ZCODE_VOICE_PROCESS_RECLAIM_MS);
+  const delay = Number.isFinite(configured) ? Math.max(0, configured) : 500;
+  if (!delay) return;
+  await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 function makeSegments(text) {
@@ -631,7 +737,42 @@ async function transcribe(params) {
     ? { path: audioPath, converted: false, cleanup: async () => {} }
     : await prepareAudio({ audioPath, dataRoot, taskId });
   try {
-    const asr = await runSenseVoice(prepared.path, { ...options, taskId }, async (stage, percent, message, extra) => {
+    const asr = await runSenseVoice(prepared.path, {
+      ...options,
+      taskId,
+      onChunk: async (partial) => {
+        const partialTask = {
+          version: 1,
+          taskId,
+          audioPath,
+          text: partial.text,
+          segments: partial.segments,
+          completedChunks: partial.completedChunks,
+          totalChunks: partial.totalChunks,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateTaskStatus(taskId, "transcribing", {
+          stage: "transcribing",
+          percent: 38 + Math.floor((partial.completedChunks / Math.max(1, partial.totalChunks)) * 28),
+          message: `已完成 ${partial.completedChunks}/${partial.totalChunks} 个音频分块，正在继续处理。`,
+        }, {
+          partial: {
+            completedChunks: partial.completedChunks,
+            totalChunks: partial.totalChunks,
+            chunkSeconds: partial.chunkSeconds,
+          },
+          partialArtifacts: {
+            json: path.join(artifactDir(taskId), "partial-transcript.json"),
+            text: path.join(artifactDir(taskId), "partial-transcript.txt"),
+          },
+          text: partial.text,
+          segments: partial.segments,
+          partialAvailable: true,
+        });
+        await writeJson(path.join(artifactDir(taskId), "partial-transcript.json"), partialTask);
+        await fs.writeFile(path.join(artifactDir(taskId), "partial-transcript.txt"), `${partial.text || ""}\n`, "utf8");
+      },
+    }, async (stage, percent, message, extra) => {
       await updateTaskStatus(taskId, stage, { stage, percent, message }, extra);
     });
     const baseSegments = asr.segments?.length ? asr.segments : makeSegments(asr.text);
@@ -707,12 +848,26 @@ async function startTranscription(params) {
     try {
       await transcribe({ ...params, taskId });
     } catch (error) {
+      const current = await readJson(taskFile(taskId), null);
+      const partialAvailable = Boolean(current?.partialAvailable || current?.segments?.length || current?.text);
       await updateTaskStatus(taskId, "failed", {
         stage: "failed",
         percent: 100,
         message: error.message,
       }, {
-        error: { code: error.code || "transcription_failed", message: error.message },
+        partialAvailable,
+        partial: current?.partial ? {
+          ...current.partial,
+          failedChunk: error.completedChunks ? error.completedChunks + 1 : undefined,
+          error: error.code || "transcription_failed",
+        } : undefined,
+        error: {
+          code: error.code || "transcription_failed",
+          message: error.message,
+          ...(error.completedChunks ? { completedChunks: error.completedChunks } : {}),
+          ...(error.totalChunks ? { totalChunks: error.totalChunks } : {}),
+          ...(partialAvailable ? { partialAvailable: true } : {}),
+        },
       });
     } finally {
       activeTasks.delete(taskId);
@@ -732,6 +887,9 @@ async function transcriptionStatus(params) {
     progress: task.progress || { stage: task.status, percent: 0 },
     error: task.error || null,
     artifacts: task.artifacts || null,
+    partialArtifacts: task.partialArtifacts || null,
+    partialAvailable: Boolean(task.partialAvailable || task.segments?.length),
+    partial: task.partial || null,
     segmentCount: task.segments?.length || 0,
     totalCharacters: task.text?.length || 0,
     preview: task.text ? task.text.slice(0, 1200) : "",
