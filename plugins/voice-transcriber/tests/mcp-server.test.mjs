@@ -150,6 +150,8 @@ test("long transcript remains local and can be read as a page", async () => {
     const page = await server.call("read_transcript", { taskId: started.taskId, includeText: true, limit: 1 });
     assert.equal(page.text.length, 80001);
     assert.match(page.artifacts.json, /transcript\.json$/);
+    assert.match(page.artifacts.text, /transcript\.txt$/);
+    assert.equal((await fs.readFile(page.artifacts.text, "utf8")).trim(), "长".repeat(80001));
   } finally {
     await server.close();
   }

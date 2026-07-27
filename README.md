@@ -35,6 +35,7 @@ https://github.com/0xHyde/ZCodePlugins
 - MCP 使用异步任务，长录音不会阻塞一次工具调用；
 - 完整全文保存在本地，ZCode 通过分页接口读取，不会丢失全文；
 - 长录音每个分块成功后立即保存部分结果，低内存失败时仍可读取已完成内容；
+- 完成后始终保存并返回 `transcript.txt` 全文文件，同时提供 JSON、Markdown、SRT/VTT（按配置）文件；
 - 不上传录音，不内置摘要大模型，纪要和后续分析由 ZCode 完成；
 - 转写结束后释放 SenseVoice，CAM++ 空闲 30 秒后退出。
 

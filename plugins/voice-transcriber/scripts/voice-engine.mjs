@@ -236,11 +236,13 @@ async function writeArtifacts(task) {
     segments: task.segments,
   };
   await writeJson(path.join(directory, "transcript.json"), transcript);
+  await fs.writeFile(path.join(directory, "transcript.txt"), `${task.text || ""}\n`, "utf8");
   await fs.writeFile(path.join(directory, "transcript.md"), renderMarkdown(task), "utf8");
   if (task.options.outputFormat === "srt") await fs.writeFile(path.join(directory, "transcript.srt"), renderSubtitles(task, ","), "utf8");
   if (task.options.outputFormat === "vtt") await fs.writeFile(path.join(directory, "transcript.vtt"), `WEBVTT\n\n${renderSubtitles(task, ".")}`, "utf8");
   return {
     json: path.join(directory, "transcript.json"),
+    text: path.join(directory, "transcript.txt"),
     markdown: path.join(directory, "transcript.md"),
     ...(task.options.outputFormat === "srt" ? { srt: path.join(directory, "transcript.srt") } : {}),
     ...(task.options.outputFormat === "vtt" ? { vtt: path.join(directory, "transcript.vtt") } : {}),
@@ -761,12 +763,14 @@ async function transcribe(params) {
           },
           partialArtifacts: {
             json: path.join(artifactDir(taskId), "partial-transcript.json"),
+            text: path.join(artifactDir(taskId), "partial-transcript.txt"),
           },
           text: partial.text,
           segments: partial.segments,
           partialAvailable: true,
         });
         await writeJson(path.join(artifactDir(taskId), "partial-transcript.json"), partialTask);
+        await fs.writeFile(path.join(artifactDir(taskId), "partial-transcript.txt"), `${partial.text || ""}\n`, "utf8");
       },
     }, async (stage, percent, message, extra) => {
       await updateTaskStatus(taskId, stage, { stage, percent, message }, extra);
