@@ -154,7 +154,7 @@ test("async mock transcription creates a task and reads the completed transcript
     assert.match(started.taskId, /^task_/);
     assert.ok(["queued", "running", "completed"].includes(started.status));
     const status = await waitFor(server, started.taskId);
-    assert.equal(status.status, "completed");
+    assert.equal(status.status, "completed", JSON.stringify(status));
     const transcript = await server.call("read_transcript", { taskId: started.taskId, includeText: true });
     assert.match(transcript.text, /本地语音引擎/);
     assert.equal(transcript.totalSegments, 1);
@@ -712,7 +712,8 @@ test("stage caches follow dependency bytes instead of configured file locations"
     await firstServer.initialize();
     const started = await firstServer.call("start_transcription", { audioPath });
     firstTaskId = started.taskId;
-    assert.equal((await waitFor(firstServer, started.taskId)).status, "completed");
+    const firstCompleted = await waitFor(firstServer, started.taskId);
+    assert.equal(firstCompleted.status, "completed", JSON.stringify(firstCompleted));
   } finally {
     await firstServer.close();
   }
