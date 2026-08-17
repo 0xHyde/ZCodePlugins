@@ -886,11 +886,7 @@ class JsonlBackendClient {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-    const child = this.child;
-    if (child) {
-      if (error) child.kill();
-      else child.stdin.end();
-    }
+    if (this.child) this.child.kill();
     for (const item of this.pending.values()) item.reject(error || fail("speaker backend closed", "backend_closed"));
     this.pending.clear();
     this.child = null;

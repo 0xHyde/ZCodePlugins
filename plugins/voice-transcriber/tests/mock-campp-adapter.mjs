@@ -3,22 +3,12 @@ import fs from "node:fs";
 
 const embedding = [1, 0, 0, 0];
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-let closed = false;
 const log = (value) => {
   if (process.env.ZCODE_CAMPP_CALL_LOG) fs.appendFileSync(process.env.ZCODE_CAMPP_CALL_LOG, `${value}\n`);
 };
-const markClosed = () => {
-  if (closed) return;
-  closed = true;
-  log("closed");
-};
 
 process.on("SIGTERM", () => {
-  markClosed();
-  process.exit(0);
-});
-input.on("close", () => {
-  markClosed();
+  log("closed");
   process.exit(0);
 });
 

@@ -76,6 +76,10 @@ function startServer(extraEnv = {}, { keepData = false, entry = "scripts/mcp-ser
   };
 }
 
+function expectedCamppCalls(...methods) {
+  return process.platform === "win32" ? methods : methods.flatMap((method) => [method, "closed"]);
+}
+
 async function waitFor(server, taskId) {
   for (let index = 0; index < 80; index += 1) {
     const status = await server.call("get_transcription_status", { taskId });
@@ -199,7 +203,7 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
       if (calls.length >= 4) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert.deepEqual(calls, ["diarize", "closed", "diarize", "closed"]);
+    assert.deepEqual(calls, expectedCamppCalls("diarize", "diarize"));
   } finally {
     await server.close();
   }
@@ -664,7 +668,7 @@ test("task cache identity is explicitly versioned and separates ASR, speaker, an
       if (camppCalls.length >= 4) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert.deepEqual(camppCalls, ["diarize", "closed", "diarize", "closed"]);
+    assert.deepEqual(camppCalls, expectedCamppCalls("diarize", "diarize"));
   } finally {
     await thirdServer.close();
     await fs.rm(dataRoot, { recursive: true, force: true });
@@ -723,7 +727,7 @@ test("stage caches follow dependency bytes instead of configured file locations"
     assert.equal(task.cache.asr.hit, true);
     assert.equal(task.cache.speaker.hit, true);
     assert.deepEqual((await fs.readFile(asrLog, "utf8")).trim().split(/\r?\n/), ["transcribe"]);
-    assert.deepEqual((await fs.readFile(camppLog, "utf8")).trim().split(/\r?\n/), ["diarize", "closed"]);
+    assert.deepEqual((await fs.readFile(camppLog, "utf8")).trim().split(/\r?\n/), expectedCamppCalls("diarize"));
   } finally {
     await secondServer.close();
   }
@@ -784,7 +788,7 @@ test("speaker projection identity follows profile prototype bytes instead of tim
     assert.equal(transcript.cache.asr.hit, true);
     assert.equal(transcript.cache.speaker.hit, true);
     assert.deepEqual((await fs.readFile(asrLog, "utf8")).trim().split(/\r?\n/), ["transcribe"]);
-    assert.deepEqual((await fs.readFile(camppLog, "utf8")).trim().split(/\r?\n/), ["diarize", "closed"]);
+    assert.deepEqual((await fs.readFile(camppLog, "utf8")).trim().split(/\r?\n/), expectedCamppCalls("diarize"));
   } finally {
     await secondServer.close();
   }
