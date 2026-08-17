@@ -17,7 +17,10 @@ process.on("SIGTERM", () => {
   markClosed();
   process.exit(0);
 });
-input.on("close", markClosed);
+input.on("close", () => {
+  markClosed();
+  process.exit(0);
+});
 
 input.on("line", (line) => {
   if (!line.trim()) return;
