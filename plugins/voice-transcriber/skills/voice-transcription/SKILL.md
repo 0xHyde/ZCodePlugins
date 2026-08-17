@@ -1,7 +1,6 @@
 ---
 name: voice-transcription
 description: Use the local voice-transcriber MCP for meeting, interview, research, or other audio/video transcription requests. Use when the user provides a local recording or asks to transcribe audio, identify speakers, correct speaker names, register confirmed speaker samples, read a full transcript, or search a completed transcript.
-when_to_use: Automatically use this skill when a local audio or video file is part of the request.
 ---
 
 # Local voice transcription
@@ -11,9 +10,10 @@ Use the plugin MCP tools to complete the workflow. Do not ask the user to instal
 ## Transcribe
 
 1. Call `start_transcription` with the absolute local audio/video path. Enable speaker matching unless the user explicitly asks for transcription only.
-2. If the result is not `completed`, poll `get_transcription_status` with the returned `taskId` every few seconds. Model preparation, audio conversion, transcription, and speaker identification are expected states; do not report failure while the task is progressing.
-3. When completed, use `read_transcript` to retrieve the full transcript in pages if it is long. Preserve timestamps and speaker names when producing notes, summaries, minutes, or action items.
-4. The MCP stores the complete transcript locally. Do not claim that the full transcript was lost merely because the first response contains a preview.
+2. If the result is not `completed`, call `wait_transcription` with the returned `taskId`. If it times out while still progressing, call it again; use `get_transcription_status` only when an immediate non-waiting snapshot is needed.
+3. If waiting returns `interrupted`, call `start_transcription` once more with the same audio path and options, then continue waiting. The stable task ID and local ASR checkpoint resume completed chunks; do not ask the user to repair the task manually.
+4. When completed, use `read_transcript` to retrieve the full transcript in pages if it is long. Preserve timestamps and speaker names when producing notes, summaries, minutes, or action items.
+5. The MCP stores the complete transcript locally. Do not claim that the full transcript was lost merely because the first response contains a preview.
 
 ## Speaker corrections and learning
 

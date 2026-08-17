@@ -6,6 +6,9 @@ and the matching ONNX Runtime library under `bin/<platform>/<arch>/`.
 Models are intentionally not included here. They are downloaded on the first
 transcription and stored under the ZCode plugin data directory.
 
-The repository intentionally does not commit platform binaries. CI or the
-release packager must build and attach them for macOS arm64/x64 and Windows x64.
-Linux is intentionally out of scope for the current release.
+The repository marketplace installs this plugin directory directly, so the
+tracked macOS arm64 and Windows x64 runtime files must be rebuilt, tested, and
+synced before a release tag is created. Release CI independently rebuilds both
+platforms again, replaces the runtime files in the final ZIP, and verifies every
+file against the manifest produced by that build. macOS x64 and Linux are
+intentionally out of scope for the current release.

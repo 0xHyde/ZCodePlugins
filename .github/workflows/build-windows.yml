@@ -32,7 +32,7 @@ jobs:
           node-version: 22
 
       - name: Install plugin build dependencies
-        run: npm install --prefix plugins/voice-transcriber --ignore-scripts
+        run: npm ci --prefix plugins/voice-transcriber --ignore-scripts
 
       - name: Build bundled MCP server
         run: npm run build:voice-plugin
@@ -48,18 +48,32 @@ jobs:
             nasm
             mingw-w64-ucrt-x86_64-gcc
 
+      - name: Start with an empty Windows runtime directory
+        run: |
+          $runtime = "plugins/voice-transcriber/bin/win32/x64"
+          Remove-Item -Recurse -Force $runtime -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+
       - name: Build minimal redistributable ffmpeg
         shell: msys2 {0}
         env:
           ZCODE_RUNTIME_PLATFORM: win32
           ZCODE_RUNTIME_ARCH: x64
+          ZCODE_FFMPEG_REF: n7.1.1
+          ZCODE_FFMPEG_COMMIT: db69d06eeeab4f46da15030a80d539efb4503ca8
         run: bash tools/build-ffmpeg.sh
 
       - name: Build official SenseVoice runtime
-        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --native off --jobs 2
+        run: npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9 --native off --jobs 2
 
       - name: Build CAM++ ONNX Runtime adapter
-        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || '065629c313eaf1a01c65c640c46d77e61e9607b4' }} --ort-version 1.12.0 --jobs 2
+        run: npm run build:campp -- --ref 065629c313eaf1a01c65c640c46d77e61e9607b4 --ort-version 1.12.0 --jobs 2
+
+      - name: Test native speaker clustering
+        run: |
+          cmake -S plugins/voice-transcriber/native -B build/speaker-tests -DBUILD_CAMPP_ADAPTER=OFF -DBUILD_SPEAKER_CLUSTERING_TESTS=ON
+          cmake --build build/speaker-tests --config Release
+          ctest --test-dir build/speaker-tests --output-on-failure -C Release
 
       - name: Run JavaScript tests and plugin validation
         shell: cmd
@@ -70,14 +84,19 @@ jobs:
 
       - name: Verify Windows runtime files
         run: |
-          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/llama-funasr-sensevoice.exe")) { throw "SenseVoice runtime missing" }
-          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/campp-adapter.exe")) { throw "CAM++ adapter missing" }
-          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/ffmpeg.exe")) { throw "ffmpeg runtime missing" }
-          if (!(Test-Path "plugins/voice-transcriber/bin/win32/x64/onnxruntime.dll")) { throw "ONNX Runtime DLL missing" }
-          & "plugins/voice-transcriber/bin/win32/x64/ffmpeg.exe" -version | Out-Null
-          $request = '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}'
-          $response = $request | & "plugins/voice-transcriber/bin/win32/x64/campp-adapter.exe" --stdio
-          if (!$response) { throw "CAM++ adapter did not start" }
+          $runtime = "plugins/voice-transcriber/bin/win32/x64"
+          foreach ($file in @(
+            "llama-funasr-sensevoice.exe", "campp-adapter.exe", "ffmpeg.exe", "onnxruntime.dll",
+            "SENSEVOICE_LICENSE.txt", "LLAMA_CPP_LICENSE.txt", "3D_SPEAKER_LICENSE.txt",
+            "NLOHMANN_JSON_LICENSE.txt", "ORT_LICENSE.txt", "ORT_THIRD_PARTY_NOTICES.txt",
+            "FFMPEG_LICENSE.txt"
+          )) {
+            if (!(Test-Path (Join-Path $runtime $file))) { throw "Runtime file missing: $file" }
+          }
+          & (Join-Path $runtime "ffmpeg.exe") -version | Out-Null
+          $response = '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}' | & (Join-Path $runtime "campp-adapter.exe") --stdio | ConvertFrom-Json
+          if ($response.error.code -ne "campp_failed") { throw "CAM++ adapter protocol smoke test failed" }
+          node --check plugins/voice-transcriber/dist/mcp/server.js
 
       - name: Package Windows runtime
         run: |

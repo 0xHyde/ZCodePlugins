@@ -22,7 +22,7 @@ https://github.com/0xHyde/ZCodePlugins
 2. 校验文件大小和 SHA256 后保存到 ZCode 插件数据目录；
 3. 后续离线复用，不重复下载。
 
-当前修复版本：v0.3.3（Windows 长录音低内存修复）
+当前发布候选版本：v0.4.0-rc.1
 
 ## voice-transcriber
 
@@ -32,21 +32,23 @@ https://github.com/0xHyde/ZCodePlugins
 - FSMN-VAD 自动分段并保留时间戳；
 - CAM++ 区分说话人并匹配本地声纹档案；
 - 用户修正说话人后自动注册确认片段，支持回滚；
-- MCP 使用异步任务，长录音不会阻塞一次工具调用；
+- MCP 使用 `start_transcription → wait_transcription → read_transcript` 闭环，长录音不会阻塞一次工具调用；
 - 完整全文保存在本地，ZCode 通过分页接口读取，不会丢失全文；
-- 长录音每个分块成功后立即保存部分结果，低内存失败时仍可读取已完成内容；
+- 长录音每个分块成功后立即保存部分结果，失败或进程中断后可复用已完成的 ASR checkpoint；
 - 完成后始终保存并返回 `transcript.txt` 全文文件，同时提供 JSON、Markdown、SRT/VTT（按配置）文件；
 - 不上传录音，不内置摘要大模型，纪要和后续分析由 ZCode 完成；
-- 转写结束后释放 SenseVoice，CAM++ 空闲 30 秒后退出。
+- 转写结束后释放 SenseVoice，每次说话人分析或学习结束后立即释放 CAM++；
+- ASR 与说话人分析独立缓存，缓存键包含模型和 runtime SHA；修改档案、匹配阈值或输出格式不会重复执行昂贵推理。
 
-首次使用大约下载 284 MB 模型。模型只在首次转写时下载，默认数据目录由 ZCode 的 `${ZCODE_PLUGIN_DATA}` 提供：
+首次使用大约下载 284 MB 模型。模型只在首次转写时下载，默认数据目录由 ZCode 的 `${CLAUDE_PLUGIN_DATA}` 提供：
 
 ```text
-${ZCODE_PLUGIN_DATA}/
+${CLAUDE_PLUGIN_DATA}/
 ├── models/       # SenseVoice、FSMN-VAD、CAM++
 ├── runtimes/     # 旧版本运行时缓存（v0.3.0 通常不使用）
 ├── artifacts/    # 完整转写文件
 ├── tasks/        # 任务索引
+├── cache/        # 分阶段 ASR / Speaker 缓存
 ├── learning/     # 可回滚的学习记录
 └── profiles.json # 本地说话人档案
 ```
@@ -73,3 +75,8 @@ packages/  未来插件共享包
 ```
 
 Linux 暂不在当前发布范围内。
+
+## 许可证
+
+本仓库代码按 [Apache License 2.0](LICENSE) 发布。模型权重不随插件包分发；插件及随包运行时的第三方组件与模型来源说明见
+[`plugins/voice-transcriber/THIRD_PARTY_NOTICES.md`](plugins/voice-transcriber/THIRD_PARTY_NOTICES.md)。

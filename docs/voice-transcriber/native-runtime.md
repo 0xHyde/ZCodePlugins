@@ -60,7 +60,7 @@ ZCode 对外使用的是应用层异步 MCP 接口：先调用 `start_transcript
 
 ## CAM++ adapter 协议
 
-主引擎通过 `ZCODE_CAMPP_COMMAND` 启动一个常驻 JSONL adapter。adapter 接收同样的
+主引擎通过 `ZCODE_CAMPP_COMMAND` 启动一个 JSONL adapter。adapter 接收同样的
 JSON-RPC 行协议，并至少实现两个方法：
 
 ```json
@@ -71,7 +71,7 @@ JSON-RPC 行协议，并至少实现两个方法：
 `diarize` 返回 `{ "segments": [...] }`；`embed_segments` 返回
 `{ "embeddings": [{ "segmentId": "seg_0001", "embedding": [0.1, 0.2] }] }`。
 主引擎负责归一化、与本地档案做余弦相似度匹配、阈值/间隔判定以及增量学习和回滚。
-这样 ONNX Runtime 只负责模型推理，避免每个任务重复加载 CAM++。
+这样 ONNX Runtime 只负责模型推理；同一个说话人分析或学习阶段内复用该进程，阶段结束后立即释放。
 
 SenseVoice 命令可以输出纯文本，也可以输出 `{ "text": "...", "segments": [...] }`
 或直接输出 segments 数组；后两种格式会保留 VAD 时间戳，供 CAM++ 分离和修正使用。
@@ -94,14 +94,14 @@ ZCODE_CAMPP_ARGS='["--model","/path/to/campp.onnx"]'
 
 没有配置 SenseVoice 时，`transcribe_audio` 的内部状态检查会报告缺失路径；引擎会自动查找标准本地模型目录。没有 CAM++ 时可以转写，但不会伪造或写入声纹样本。
 
-SenseVoice 子进程在单次转写结束后退出，释放模型内存；CAM++ adapter 为减少重复加载默认常驻，空闲 30 秒后自动退出。
+SenseVoice 子进程在一次 ASR 调用结束后退出并释放模型内存；CAM++ adapter 在一次说话人分析或学习阶段结束后立即退出。内部仍保留空闲超时作为异常路径兜底，但它不是正常资源生命周期。
 
 官方 runtime 只直接处理 16kHz、单声道、16-bit WAV。插件会优先复用符合条件的 WAV；对 MP3、M4A 和其他 WAV，调用随插件发布的 `ffmpeg` 转换，任务结束后删除临时 WAV。也可以用 `ZCODE_AUDIO_CONVERTER` 覆盖路径。
 
 ## 性能约束
 
-- 模型只加载一次，sidecar 常驻。
-- 音频只解码一次，VAD/ASR/CAM++ 复用 PCM 和 VAD 结果。
+- Node sidecar 常驻；ASR 与 CAM++ native 进程仅在各自阶段运行，空闲时不保留推理模型。
+- 压缩音频先在本地统一转换一次；ASR 与 CAM++ 复用同一份 16kHz PCM WAV 和 ASR/VAD 时间线。
 - 不把整段长音频加载到内存。
 - 线程数由 sidecar 统一管理，不允许每个模型各自占满 CPU。
 - `enroll_from_correction` 只能处理缓存片段，不得重新转写整段会议。

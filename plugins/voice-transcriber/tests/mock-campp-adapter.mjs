@@ -1,19 +1,36 @@
 import readline from "node:readline";
+import fs from "node:fs";
 
 const embedding = [1, 0, 0, 0];
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+const log = (value) => {
+  if (process.env.ZCODE_CAMPP_CALL_LOG) fs.appendFileSync(process.env.ZCODE_CAMPP_CALL_LOG, `${value}\n`);
+};
+
+process.on("SIGTERM", () => {
+  log("closed");
+  process.exit(0);
+});
 
 input.on("line", (line) => {
   if (!line.trim()) return;
   const request = JSON.parse(line);
+  log(request.method);
   let result;
   if (request.method === "diarize") {
     result = {
+      algorithmVersion: "speaker-v2",
       segments: (request.params.segments || []).map((segment) => ({
         ...segment,
         speaker: "cluster_0",
-        confidence: 0.9,
+        speakerMatch: "cluster",
+        speakerConfidence: 0.9,
+        speakerPurity: 0.9,
+        mixedSpeaker: false,
+        speakerWindowCount: 2,
       })),
+      clusters: [{ clusterId: 0, size: 2, canonicalKey: "seg_0001:w0", prototype: embedding }],
+      metrics: { windowCount: 2, clusterCount: 1, batchCount: 1 },
     };
   } else if (request.method === "embed_segments") {
     result = {

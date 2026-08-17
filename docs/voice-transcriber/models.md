@@ -7,10 +7,10 @@
 1. 用户在 ZCode 配置中填写模型路径；
 2. 配置一个 GitHub 模型 manifest，首次转写时按需下载。
 
-默认目录由 ZCode 通过 `${ZCODE_PLUGIN_DATA}` 注入：
+默认目录由 ZCode 通过 `${CLAUDE_PLUGIN_DATA}` 注入：
 
 ```text
-${ZCODE_PLUGIN_DATA}/models/
+${CLAUDE_PLUGIN_DATA}/models/
 ├── sense-voice-small-q8_0.gguf
 ├── fsmn-vad.gguf
 └── cam++.onnx
@@ -76,10 +76,12 @@ node tools/create-model-manifest.mjs \
 如果使用 GitHub 镜像，将带 `models-` 前缀的模型资产和 `model-manifest.json` 一起上传到对应 GitHub Release；也可以直接使用仓库内的默认清单：
 
 ```text
-ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.3.0/model-manifest.json
+ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.4.0-rc.1/model-manifest.json
 ```
 
 默认清单已经接入 FunAudioLLM 官方来源；三个模型均标记为 Apache-2.0。下载时仍会校验 SHA256 和文件大小，项目只发布清单，不重新托管模型权重。SenseVoice、FSMN-VAD 和 CAM++ 的来源记录在仓库根目录 [`model-manifest.json`](../../model-manifest.json)。
+
+清单中的 `version` 是模型集合身份，与插件版本独立。模型字节和 SHA256 未变化时，发布新插件无需人为修改模型集合版本，也不会因此重复执行 ASR 或说话人分析。
 
 ## Runtime
 

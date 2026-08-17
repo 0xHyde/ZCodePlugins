@@ -4,6 +4,27 @@ project(zcode_campp_adapter LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(BUILD_CAMPP_ADAPTER "Build the ONNX Runtime JSONL adapter" ON)
+option(BUILD_SPEAKER_CLUSTERING_TESTS "Build deterministic pure clustering tests" OFF)
+
+add_library(speaker-clustering STATIC
+  speaker-clustering.cpp
+)
+target_include_directories(speaker-clustering PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+
+if(BUILD_SPEAKER_CLUSTERING_TESTS)
+  enable_testing()
+  add_executable(speaker-clustering-test
+    speaker-clustering-test.cpp
+  )
+  target_link_libraries(speaker-clustering-test PRIVATE speaker-clustering)
+  add_test(NAME speaker-clustering-test COMMAND speaker-clustering-test)
+endif()
+
+if(NOT BUILD_CAMPP_ADAPTER)
+  return()
+endif()
+
 if(NOT DEFINED SPEAKERLAB_ROOT)
   message(FATAL_ERROR "SPEAKERLAB_ROOT must point to 3D-Speaker/runtime/onnxruntime")
 endif()
@@ -30,6 +51,7 @@ target_include_directories(campp-adapter PRIVATE
   "${ONNXRUNTIME_INCLUDE}"
   "${NLOHMANN_INCLUDE}"
 )
+target_link_libraries(campp-adapter PRIVATE speaker-clustering)
 target_link_directories(campp-adapter PRIVATE "${ONNXRUNTIME_LIBRARY}")
 target_link_libraries(campp-adapter PRIVATE onnxruntime)
 
@@ -43,6 +65,7 @@ if(APPLE)
   set_target_properties(campp-adapter PROPERTIES
     BUILD_RPATH "@loader_path"
     INSTALL_RPATH "@loader_path"
+    BUILD_WITH_INSTALL_RPATH TRUE
   )
 elseif(UNIX)
   set_target_properties(campp-adapter PROPERTIES

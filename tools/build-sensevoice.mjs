@@ -11,6 +11,7 @@ const pluginRoot = path.join(root, "plugins", "voice-transcriber");
 const repository = "https://github.com/QwenAudio/SenseVoice.git";
 const defaultRef = "runtime-llamacpp-v0.1.9";
 const defaultCommit = "73ccdd3577db37e92dbf22a4a9fc323b038cf13b";
+const defaultLlamaCppCommit = "8086439a4cea94c71a5dfb8fe4ad1546aebd640f";
 
 function option(name, fallback = null) {
   const index = process.argv.indexOf(`--${name}`);
@@ -95,6 +96,37 @@ async function addSegmentOutput(source) {
   return file;
 }
 
+async function patchLegacyMacosAccelerate(llamaCppSource, deploymentTarget) {
+  if (process.platform !== "darwin") return false;
+  const [major, minor = 0] = String(deploymentTarget).split(".").map(Number);
+  if (major > 13 || (major === 13 && minor >= 3)) return false;
+  const patches = [
+    {
+      file: path.join(llamaCppSource, "ggml", "src", "ggml-blas", "CMakeLists.txt"),
+      lines: [
+        "        add_compile_definitions(ACCELERATE_NEW_LAPACK)\n",
+        "        add_compile_definitions(ACCELERATE_LAPACK_ILP64)\n",
+      ],
+    },
+    {
+      file: path.join(llamaCppSource, "ggml", "src", "ggml-cpu", "CMakeLists.txt"),
+      lines: [
+        "            target_compile_definitions(${GGML_CPU_NAME} PRIVATE ACCELERATE_NEW_LAPACK)\n",
+        "            target_compile_definitions(${GGML_CPU_NAME} PRIVATE ACCELERATE_LAPACK_ILP64)\n",
+      ],
+    },
+  ];
+  for (const patch of patches) {
+    let code = (await fs.readFile(patch.file, "utf8")).replace(/\r\n/g, "\n");
+    for (const line of patch.lines) {
+      if (!code.includes(line)) throw new Error(`llama.cpp Accelerate 兼容补丁无法匹配：${path.relative(llamaCppSource, patch.file)}`);
+      code = code.replace(line, "");
+    }
+    await fs.writeFile(patch.file, code, "utf8");
+  }
+  return true;
+}
+
 const ref = option("ref", process.env.ZCODE_SENSEVOICE_REF || defaultRef);
 const nativeOption = option(
   "native",
@@ -105,6 +137,7 @@ const output = path.resolve(option(
   "output",
   path.join(pluginRoot, "bin", process.platform, process.arch),
 ));
+const macosDeploymentTarget = process.env.MACOSX_DEPLOYMENT_TARGET || "12.0";
 const jobs = String(Math.max(1, Number(option("jobs", process.env.ZCODE_BUILD_JOBS || Math.min(4, os.cpus().length || 1)))));
 const keepBuild = process.env.ZCODE_KEEP_BUILD === "1";
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "zcode-sensevoice-build-"));
@@ -117,15 +150,43 @@ try {
     const revision = (await run("git", ["rev-parse", "HEAD"], source)).stdout.trim();
     if (revision !== defaultCommit) throw new Error(`SenseVoice ${defaultRef} 提交不匹配：${revision}`);
   }
+  const senseVoiceLicense = path.join(source, "LICENSE");
+  if (!(await fs.stat(senseVoiceLicense).catch(() => null))?.isFile()) {
+    throw new Error(`SenseVoice 源码缺少许可证文件：${senseVoiceLicense}`);
+  }
   await addSegmentOutput(source);
   const cmakeSource = path.join(source, "runtime", "llama.cpp");
-  await run("cmake", [
+  const cmakeSourceText = await fs.readFile(path.join(cmakeSource, "CMakeLists.txt"), "utf8");
+  const expectedLlamaCppCommit = /GIT_TAG\s+([a-f0-9]{40})/i.exec(cmakeSourceText)?.[1]?.toLowerCase();
+  if (!expectedLlamaCppCommit) throw new Error("SenseVoice CMake 缺少固定的 llama.cpp 提交。");
+  if (ref === defaultRef && expectedLlamaCppCommit !== defaultLlamaCppCommit) {
+    throw new Error(`SenseVoice ${defaultRef} 的 llama.cpp 提交不匹配：${expectedLlamaCppCommit}`);
+  }
+  const cmakeConfigureArgs = [
     "-S", cmakeSource,
     "-B", build,
     "-DCMAKE_BUILD_TYPE=Release",
     `-DGGML_NATIVE=${nativeOption === "on" ? "ON" : "OFF"}`,
+  ];
+  if (process.platform === "darwin") cmakeConfigureArgs.push(`-DCMAKE_OSX_DEPLOYMENT_TARGET=${macosDeploymentTarget}`);
+  await run("cmake", cmakeConfigureArgs, root);
+  const llamaCppSource = path.join(build, "_deps", "llama-src");
+  const llamaCppRevision = (await run("git", ["rev-parse", "HEAD"], llamaCppSource)).stdout.trim().toLowerCase();
+  if (llamaCppRevision !== expectedLlamaCppCommit) {
+    throw new Error(`llama.cpp 提交不匹配：${llamaCppRevision}`);
+  }
+  const patchedLegacyAccelerate = await patchLegacyMacosAccelerate(llamaCppSource, macosDeploymentTarget);
+  if (patchedLegacyAccelerate) await run("cmake", cmakeConfigureArgs, root);
+  const llamaCppLicense = path.join(llamaCppSource, "LICENSE");
+  if (!(await fs.stat(llamaCppLicense).catch(() => null))?.isFile()) {
+    throw new Error(`llama.cpp 源码缺少许可证文件：${llamaCppLicense}`);
+  }
+  await run("cmake", [
+    "--build", build,
+    "--config", "Release",
+    "--target", "llama-funasr-sensevoice",
+    "--parallel", jobs,
   ], root);
-  await run("cmake", ["--build", build, "--config", "Release", "-j", jobs], root);
 
   const binaryName = process.platform === "win32" ? "llama-funasr-sensevoice.exe" : "llama-funasr-sensevoice";
   const binary = await findFile(build, binaryName);
@@ -133,8 +194,19 @@ try {
   await fs.mkdir(output, { recursive: true });
   const destination = path.join(output, binaryName);
   await fs.copyFile(binary, destination);
+  await fs.copyFile(senseVoiceLicense, path.join(output, "SENSEVOICE_LICENSE.txt"));
+  await fs.copyFile(llamaCppLicense, path.join(output, "LLAMA_CPP_LICENSE.txt"));
   if (process.platform !== "win32") await fs.chmod(destination, 0o755);
-  console.log(JSON.stringify({ repository, ref, output: destination, jobs, native: nativeOption, segmentOutput: true }, null, 2));
+  console.log(JSON.stringify({
+    repository,
+    ref,
+    output: destination,
+    jobs,
+    native: nativeOption,
+    segmentOutput: true,
+    macosDeploymentTarget: process.platform === "darwin" ? macosDeploymentTarget : null,
+    legacyMacosAccelerate: patchedLegacyAccelerate,
+  }, null, 2));
 } finally {
   if (!keepBuild) await fs.rm(temporaryRoot, { recursive: true, force: true });
   else console.log(`保留构建目录：${temporaryRoot}`);

@@ -26,6 +26,9 @@ const files = (await fs.readdir(input, { withFileTypes: true }))
   .map((entry) => entry.name)
   .sort();
 if (!files.length) throw new Error(`运行时目录为空：${input}`);
+if (files.some((name) => path.posix.basename(name) !== name || path.win32.basename(name) !== name)) {
+  throw new Error(`运行时目录包含不可移植的文件名：${input}`);
+}
 
 const platform = path.basename(path.dirname(input));
 const arch = path.basename(input);

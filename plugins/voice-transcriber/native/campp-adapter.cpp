@@ -2,22 +2,27 @@
 //
 // The feature extractor and ONNX wrapper are provided by the Apache-2.0
 // licensed 3D-Speaker runtime at build time.  Keeping this process separate
-// from the MCP sidecar lets the model stay resident for a short idle window,
-// while the sidecar remains small and releases the process when unused.
+// from the MCP sidecar lets one analysis batch reuse the loaded model while the
+// sidecar stays small and releases the process when that stage finishes.
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -25,6 +30,7 @@
 
 #include "feature/feature_common.h"
 #include "feature/feature_fbank.h"
+#include "speaker-clustering.hpp"
 #include "utils/wav_reader.h"
 
 #if defined(_WIN32)
@@ -39,10 +45,26 @@ using json = nlohmann::json;
 
 namespace {
 
+std::filesystem::path path_from_utf8(const std::string &value) {
+    const auto *begin = reinterpret_cast<const char8_t *>(value.data());
+    return std::filesystem::path(std::u8string(begin, begin + value.size()));
+}
+
+std::string path_as_utf8(const std::filesystem::path &value) {
+    const auto encoded = value.u8string();
+    return std::string(reinterpret_cast<const char *>(encoded.data()), encoded.size());
+}
+
+void remove_utf8_file(const std::string &value) {
+    std::error_code error;
+    std::filesystem::remove(path_from_utf8(value), error);
+}
+
 struct Segment {
     std::string id;
     double start = 0.0;
     double end = 0.0;
+    std::size_t input_index = 0;
 };
 
 struct WavInfo {
@@ -90,7 +112,7 @@ uint32_t read_le32(const char *bytes) {
 }
 
 WavInfo read_wav_info(const std::string &path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(path_from_utf8(path), std::ios::binary);
     if (!file) throw std::runtime_error("cannot open WAV file");
     char header[12]{};
     file.read(header, sizeof(header));
@@ -133,43 +155,88 @@ WavInfo read_wav_info(const std::string &path) {
     return info;
 }
 
-std::vector<float> read_audio_range(const std::string &path, const WavInfo &info, size_t begin, size_t end) {
-    if (end <= begin) return {};
-    const size_t max_samples = info.data_bytes / sizeof(int16_t);
-    begin = std::min(begin, max_samples);
-    end = std::min(end, max_samples);
-    if (end <= begin) return {};
-    std::ifstream file(path, std::ios::binary);
-    if (!file) throw std::runtime_error("cannot open WAV segment");
-    file.seekg(info.data_offset + static_cast<std::streamoff>(begin * sizeof(int16_t)));
-    std::vector<int16_t> samples(end - begin);
-    file.read(reinterpret_cast<char *>(samples.data()), static_cast<std::streamsize>(samples.size() * sizeof(int16_t)));
-    if (file.gcount() != static_cast<std::streamsize>(samples.size() * sizeof(int16_t))) throw std::runtime_error("truncated WAV data");
-    std::vector<float> audio(samples.size());
-    for (size_t i = 0; i < samples.size(); ++i) audio[i] = static_cast<float>(samples[i]) / 32767.0f;
-    return audio;
-}
+class WavAudioSource {
+public:
+    WavAudioSource(const std::string &path, const WavInfo &info)
+        : info_(info), file_(path_from_utf8(path), std::ios::binary) {
+        if (!file_) throw std::runtime_error("cannot open WAV audio source");
+    }
+
+    std::size_t sample_count() const { return info_.data_bytes / sizeof(int16_t); }
+
+    std::vector<float> read_range(std::size_t begin, std::size_t end) {
+        if (end <= begin) return {};
+        begin = std::min(begin, sample_count());
+        end = std::min(end, sample_count());
+        if (end <= begin) return {};
+        file_.clear();
+        file_.seekg(info_.data_offset + static_cast<std::streamoff>(begin * sizeof(int16_t)));
+        if (!file_) throw std::runtime_error("cannot seek WAV audio source");
+        std::vector<int16_t> samples(end - begin);
+        file_.read(reinterpret_cast<char *>(samples.data()), static_cast<std::streamsize>(samples.size() * sizeof(int16_t)));
+        if (file_.gcount() != static_cast<std::streamsize>(samples.size() * sizeof(int16_t))) {
+            throw std::runtime_error("truncated WAV data");
+        }
+        std::vector<float> audio(samples.size());
+        for (std::size_t index = 0; index < samples.size(); ++index) {
+            audio[index] = static_cast<float>(samples[index]) / 32767.0f;
+        }
+        return audio;
+    }
+
+private:
+    WavInfo info_;
+    std::ifstream file_;
+};
 
 std::vector<Segment> parse_segments(const json &params, double duration) {
     std::vector<Segment> result;
     if (!params.contains("segments") || !params["segments"].is_array()) return result;
-    int index = 0;
+    std::size_t index = 0;
     for (const auto &item : params["segments"]) {
         Segment segment;
-        segment.id = string_value(item, "id", "seg_" + std::to_string(++index));
+        segment.input_index = static_cast<std::size_t>(index);
+        segment.id = string_value(item, "id", "seg_" + std::to_string(index + 1));
         segment.start = std::max(0.0, number_value(item, "start", 0.0));
         segment.end = number_value(item, "end", duration);
         if (segment.end <= segment.start) segment.end = duration;
         segment.end = std::min(duration, segment.end);
         if (segment.end > segment.start) result.push_back(segment);
+        ++index;
     }
     return result;
 }
 
-std::string temporary_wav_path(int index) {
-    std::filesystem::path directory = std::filesystem::temp_directory_path();
-    return (directory / ("zcode-campp-" + std::to_string(process_id()) + "-" + std::to_string(index) + ".wav")).string();
-}
+std::atomic<std::uint64_t> temporary_scope_counter{0};
+
+class TemporaryWavDirectory {
+public:
+    TemporaryWavDirectory() {
+        const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto sequence = temporary_scope_counter.fetch_add(1, std::memory_order_relaxed);
+        const std::filesystem::path root = std::filesystem::temp_directory_path();
+        for (std::size_t attempt = 0; attempt < 32; ++attempt) {
+            directory_ = root / ("zcode-campp-" + std::to_string(process_id()) + "-" +
+                                std::to_string(timestamp) + "-" + std::to_string(sequence) + "-" +
+                                std::to_string(attempt));
+            std::error_code error;
+            if (std::filesystem::create_directory(directory_, error) && !error) return;
+        }
+        throw std::runtime_error("cannot create unique CAM++ temporary directory");
+    }
+
+    ~TemporaryWavDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(directory_, error);
+    }
+
+    std::string path_for(std::size_t index) const {
+        return path_as_utf8(directory_ / ("window-" + std::to_string(index) + ".wav"));
+    }
+
+private:
+    std::filesystem::path directory_;
+};
 
 void write_le16(std::ofstream &file, uint16_t value) {
     char bytes[2] = {static_cast<char>(value & 0xff), static_cast<char>((value >> 8) & 0xff)};
@@ -189,7 +256,7 @@ void write_le32(std::ofstream &file, uint32_t value) {
 void write_segment_wav(const std::string &path, const std::vector<float> &audio, uint32_t sample_rate,
                        size_t begin, size_t end) {
     if (end <= begin) throw std::runtime_error("empty audio segment");
-    std::ofstream file(path, std::ios::binary);
+    std::ofstream file(path_from_utf8(path), std::ios::binary);
     if (!file) throw std::runtime_error("cannot create temporary segment wav");
     const uint32_t data_size = static_cast<uint32_t>((end - begin) * sizeof(int16_t));
     file.write("RIFF", 4);
@@ -221,18 +288,17 @@ std::vector<float> normalize(std::vector<float> vector) {
     return vector;
 }
 
-double cosine(const std::vector<float> &left, const std::vector<float> &right) {
-    if (left.empty() || right.empty() || left.size() != right.size()) return -1.0;
-    double value = 0.0;
-    for (size_t i = 0; i < left.size(); ++i) value += static_cast<double>(left[i]) * right[i];
-    return value;
-}
+struct EmbeddingRun {
+    std::vector<std::vector<float>> embeddings;
+    std::size_t batch_count = 0;
+};
 
 class NativeOnnxModel {
 public:
-    explicit NativeOnnxModel(const std::string &model_path)
+    NativeOnnxModel(const std::string &model_path, std::size_t threads)
         : env_(ORT_LOGGING_LEVEL_WARNING, "zcode-campp"), session_options_() {
-        session_options_.SetIntraOpNumThreads(1);
+        session_options_.SetIntraOpNumThreads(static_cast<int>(std::max<std::size_t>(1, threads)));
+        session_options_.SetInterOpNumThreads(1);
         session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 #if defined(_WIN32)
         // ONNX Runtime's Windows C++ API exposes the model-path overload as
@@ -252,37 +318,63 @@ public:
         allocator.Free(output_name);
     }
 
-    std::vector<std::vector<float>> run_batch(const std::vector<speakerlab::Feature> &features) {
-        if (features.empty()) return {};
+    EmbeddingRun run_batches(const std::vector<speakerlab::Feature> &features, std::size_t batch_size) {
+        EmbeddingRun result;
+        result.embeddings.resize(features.size());
+        if (features.empty()) return result;
+        batch_size = std::max<std::size_t>(1, batch_size);
         const size_t dimensions = 80;
-        size_t max_frames = 0;
-        for (const auto &feature : features) max_frames = std::max(max_frames, feature.size());
-        if (max_frames == 0) return std::vector<std::vector<float>>(features.size());
-        std::vector<float> values;
-        values.reserve(features.size() * max_frames * dimensions);
-        for (const auto &feature : features) {
-            const std::vector<float> fallback = feature.empty() ? std::vector<float>(dimensions, 0.0f) : feature.back();
-            for (size_t frame = 0; frame < max_frames; ++frame) {
-                const auto &source = frame < feature.size() ? feature[frame] : fallback;
-                values.insert(values.end(), source.begin(), source.end());
-            }
+        std::vector<std::size_t> order;
+        order.reserve(features.size());
+        for (std::size_t index = 0; index < features.size(); ++index) {
+            if (!features[index].empty()) order.push_back(index);
         }
-        const std::array<int64_t, 3> shape{
-            static_cast<int64_t>(features.size()), static_cast<int64_t>(max_frames), static_cast<int64_t>(dimensions),
-        };
-        Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        Ort::Value input = Ort::Value::CreateTensor<float>(memory_info, values.data(), values.size(), shape.data(), shape.size());
-        const char *input_names[] = {input_name_.c_str()};
-        const char *output_names[] = {output_name_.c_str()};
-        auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names, &input, 1, output_names, 1);
-        if (outputs.empty() || !outputs.front().IsTensor()) return {};
-        const auto info = outputs.front().GetTensorTypeAndShapeInfo();
-        const size_t count = info.GetElementCount();
-        const float *data = outputs.front().GetTensorData<float>();
-        const size_t embedding_dimensions = count / features.size();
-        std::vector<std::vector<float>> result(features.size());
-        for (size_t batch = 0; batch < features.size(); ++batch) {
-            result[batch] = std::vector<float>(data + batch * embedding_dimensions, data + (batch + 1) * embedding_dimensions);
+        std::sort(order.begin(), order.end(), [&features](std::size_t left, std::size_t right) {
+            if (features[left].size() != features[right].size()) return features[left].size() < features[right].size();
+            return left < right;
+        });
+        if (order.empty()) return result;
+
+        for (std::size_t batch_begin = 0; batch_begin < order.size(); batch_begin += batch_size) {
+            const std::size_t batch_end = std::min(order.size(), batch_begin + batch_size);
+            std::size_t max_frames = 0;
+            for (std::size_t position = batch_begin; position < batch_end; ++position) {
+                max_frames = std::max(max_frames, features[order[position]].size());
+            }
+            std::vector<float> values;
+            values.reserve((batch_end - batch_begin) * max_frames * dimensions);
+            for (std::size_t position = batch_begin; position < batch_end; ++position) {
+                const auto &feature = features[order[position]];
+                const auto &fallback = feature.back();
+                for (std::size_t frame = 0; frame < max_frames; ++frame) {
+                    const auto &source = frame < feature.size() ? feature[frame] : fallback;
+                    const std::size_t copied = std::min(dimensions, source.size());
+                    values.insert(values.end(), source.begin(), source.begin() + static_cast<std::ptrdiff_t>(copied));
+                    values.insert(values.end(), dimensions - copied, 0.0f);
+                }
+            }
+
+            const std::array<int64_t, 3> shape{
+                static_cast<int64_t>(batch_end - batch_begin), static_cast<int64_t>(max_frames), static_cast<int64_t>(dimensions),
+            };
+            Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+            Ort::Value input = Ort::Value::CreateTensor<float>(memory_info, values.data(), values.size(), shape.data(), shape.size());
+            const char *input_names[] = {input_name_.c_str()};
+            const char *output_names[] = {output_name_.c_str()};
+            auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names, &input, 1, output_names, 1);
+            if (outputs.empty() || !outputs.front().IsTensor()) throw std::runtime_error("CAM++ returned no tensor output");
+            const auto info = outputs.front().GetTensorTypeAndShapeInfo();
+            const size_t count = info.GetElementCount();
+            const size_t actual_batch_size = batch_end - batch_begin;
+            if (count == 0 || count % actual_batch_size != 0) throw std::runtime_error("CAM++ returned an invalid embedding shape");
+            const float *data = outputs.front().GetTensorData<float>();
+            const size_t embedding_dimensions = count / actual_batch_size;
+            for (std::size_t batch = 0; batch < actual_batch_size; ++batch) {
+                const std::size_t original_index = order[batch_begin + batch];
+                result.embeddings[original_index] = std::vector<float>(
+                    data + batch * embedding_dimensions, data + (batch + 1) * embedding_dimensions);
+            }
+            ++result.batch_count;
         }
         return result;
     }
@@ -297,28 +389,33 @@ private:
 
 class CamppEngine {
 public:
-    std::vector<std::vector<float>> embeddings(const std::string &audio_path, const WavInfo &wav_info,
-                                               const std::vector<Segment> &segments, const std::string &model_path) {
-        load_model(model_path);
+    EmbeddingRun embeddings(const std::string &audio_path, const WavInfo &wav_info,
+                            const std::vector<Segment> &segments, const std::string &model_path,
+                            bool allow_context, std::size_t batch_size, std::size_t threads) {
+        load_model(model_path, threads);
         const double duration = static_cast<double>(wav_info.data_bytes / sizeof(int16_t)) / wav_info.sample_rate;
+        WavAudioSource audio_source(audio_path, wav_info);
+        TemporaryWavDirectory temporary_directory;
         std::vector<speakerlab::Feature> features;
         features.reserve(segments.size());
-        for (size_t index = 0; index < segments.size(); ++index) {
+        for (std::size_t index = 0; index < segments.size(); ++index) {
             const auto &segment = segments[index];
             const double start = std::max(0.0, std::min(segment.start, duration));
             const double end = std::max(start, std::min(segment.end, duration));
-            // A small context window makes short VAD/ASR segments more stable.
-            const double context_start = std::max(0.0, start - 0.20);
-            const double context_end = std::min(duration, end + 0.20);
-            const size_t begin = static_cast<size_t>(context_start * wav_info.sample_rate);
-            const size_t finish = std::min(static_cast<size_t>(wav_info.data_bytes / sizeof(int16_t)), static_cast<size_t>(context_end * wav_info.sample_rate));
+            // Legacy embed_segments keeps the small context window.  Diarize
+            // passes false so a speaker-analysis window can never cross the
+            // caller's speech region boundary.
+            const double context_start = allow_context ? std::max(0.0, start - 0.20) : start;
+            const double context_end = allow_context ? std::min(duration, end + 0.20) : end;
+            const std::size_t begin = static_cast<std::size_t>(std::floor(context_start * wav_info.sample_rate));
+            const std::size_t finish = std::min(audio_source.sample_count(), static_cast<std::size_t>(std::ceil(context_end * wav_info.sample_rate)));
             if (finish <= begin || finish - begin < wav_info.sample_rate * 0.25) {
                 features.emplace_back();
                 continue;
             }
 
-            const std::string segment_path = temporary_wav_path(static_cast<int>(index));
-            const auto audio = read_audio_range(audio_path, wav_info, begin, finish);
+            const std::string segment_path = temporary_directory.path_for(index);
+            const auto audio = audio_source.read_range(begin, finish);
             write_segment_wav(segment_path, audio, wav_info.sample_rate, 0, audio.size());
             try {
                 Silence silence;
@@ -327,28 +424,29 @@ public:
                 speakerlab::subtract_feature_mean(feature);
                 features.push_back(std::move(feature));
             } catch (...) {
-                std::remove(segment_path.c_str());
+                remove_utf8_file(segment_path);
                 throw;
             }
-            std::remove(segment_path.c_str());
+            remove_utf8_file(segment_path);
         }
 
-        std::vector<std::vector<float>> result;
+        EmbeddingRun result;
         {
             Silence silence;
-            result = model_->run_batch(features);
+            result = model_->run_batches(features, batch_size);
         }
-        for (size_t i = 0; i < result.size(); ++i) {
-            if (i >= features.size() || features[i].empty()) result[i].clear();
-            else result[i] = normalize(std::move(result[i]));
+        for (std::size_t index = 0; index < result.embeddings.size(); ++index) {
+            if (index >= features.size() || features[index].empty()) result.embeddings[index].clear();
+            else result.embeddings[index] = normalize(std::move(result.embeddings[index]));
         }
         return result;
     }
 
 private:
-    void load_model(const std::string &model_path) {
+    void load_model(const std::string &model_path, std::size_t threads) {
         if (model_path.empty()) throw std::runtime_error("CAM++ model path is empty");
-        if (model_ && model_path_ == model_path) return;
+        threads = std::max<std::size_t>(1, threads);
+        if (model_ && model_path_ == model_path && threads_ == threads) return;
         Silence silence;
         speakerlab::FbankOptions options;
         options.frame_opts.sample_freq = 16000;
@@ -357,14 +455,80 @@ private:
         options.frame_opts.dither = 0.0;
         options.mel_opts.num_bins = 80;
         fbank_ = std::make_unique<speakerlab::FbankComputer>(options);
-        model_ = std::make_unique<NativeOnnxModel>(model_path);
+        model_ = std::make_unique<NativeOnnxModel>(model_path, threads);
         model_path_ = model_path;
+        threads_ = threads;
     }
 
     std::string model_path_;
+    std::size_t threads_ = 0;
     std::unique_ptr<speakerlab::FbankComputer> fbank_;
     std::unique_ptr<NativeOnnxModel> model_;
 };
+
+double real_option(const json &params, const char *key, const char *environment_key, double fallback) {
+    if (params.contains(key) && params[key].is_number()) return params[key].get<double>();
+    const char *environment_value = std::getenv(environment_key);
+    if (environment_value && *environment_value) return std::atof(environment_value);
+    return fallback;
+}
+
+std::size_t size_option(const json &params, const char *key, const char *environment_key, std::size_t fallback,
+                        std::size_t maximum = 4096) {
+    const double value = real_option(params, key, environment_key, static_cast<double>(fallback));
+    if (!std::isfinite(value) || value < 1.0) return fallback;
+    return std::min(maximum, static_cast<std::size_t>(value));
+}
+
+zcode::speaker::ClusterOptions cluster_options(const json &params) {
+    zcode::speaker::ClusterOptions options;
+    options.cluster_threshold = real_option(params, "clusterThreshold", "ZCODE_CAMPP_CLUSTER_THRESHOLD", 0.35);
+    options.min_cluster_size = size_option(params, "minClusterSize", "ZCODE_CAMPP_MIN_CLUSTER_SIZE", 2);
+    options.min_speakers = size_option(params, "minSpeakers", "ZCODE_CAMPP_MIN_SPEAKERS", 1);
+    options.max_speakers = size_option(params, "maxSpeakers", "ZCODE_CAMPP_MAX_SPEAKERS", 15);
+    return options;
+}
+
+std::vector<Segment> make_diarization_windows(const std::vector<Segment> &segments,
+                                               std::vector<zcode::speaker::TimelineWindow> &timeline) {
+    constexpr double window_duration = 1.5;
+    constexpr double window_shift = 0.75;
+    constexpr double minimum_duration = 0.25;
+    constexpr double epsilon = 1e-7;
+    std::vector<Segment> windows;
+    for (const auto &segment : segments) {
+        const double duration = segment.end - segment.start;
+        if (duration < minimum_duration) continue;
+
+        std::vector<double> starts;
+        if (duration <= window_duration) {
+            starts.push_back(0.0);
+        } else {
+            for (double offset = 0.0; offset + window_duration <= duration + epsilon; offset += window_shift) {
+                starts.push_back(offset);
+            }
+            const double tail = duration - window_duration;
+            if (starts.empty() || std::abs(starts.back() - tail) > epsilon) starts.push_back(tail);
+        }
+        std::sort(starts.begin(), starts.end());
+        starts.erase(std::unique(starts.begin(), starts.end(), [epsilon](double left, double right) {
+                          return std::abs(left - right) <= epsilon;
+                      }), starts.end());
+
+        for (std::size_t window_index = 0; window_index < starts.size(); ++window_index) {
+            const double start = segment.start + starts[window_index];
+            const double end = std::min(segment.end, start + window_duration);
+            if (end - start < minimum_duration) continue;
+            // Segment IDs are the stable identity across the JSONL seam. Do
+            // not include the caller's array position: reordering otherwise
+            // identical input segments must not change cluster IDs.
+            const std::string key = segment.id + ":w" + std::to_string(window_index);
+            windows.push_back({key, start, end, segment.input_index});
+            timeline.push_back({segment.input_index, key, start, end});
+        }
+    }
+    return windows;
+}
 
 json embedding_entries(const std::vector<std::pair<std::string, std::vector<float>>> &entries) {
     json result = json::array();
@@ -382,83 +546,98 @@ json handle(const json &request, CamppEngine &engine) {
     const double duration = static_cast<double>(wav_info.data_bytes / sizeof(int16_t)) / wav_info.sample_rate;
     auto segments = parse_segments(params, duration);
     const std::string method = string_value(request, "method");
-    if (method == "embed_segments" && params.contains("segmentIds") && params["segmentIds"].is_array()) {
-        std::map<std::string, Segment> by_id;
-        for (const auto &segment : segments) by_id.emplace(segment.id, segment);
-        std::vector<Segment> selected;
-        for (const auto &id : params["segmentIds"]) {
-            if (!id.is_string()) continue;
-            const auto found = by_id.find(id.get<std::string>());
-            if (found != by_id.end()) selected.push_back(found->second);
-        }
-        segments = std::move(selected);
-    }
-    std::vector<std::pair<std::string, std::vector<float>>> entries;
-    const auto vectors = engine.embeddings(audio_path, wav_info, segments, model_path);
-    for (size_t i = 0; i < segments.size() && i < vectors.size(); ++i) {
-        if (!vectors[i].empty()) entries.emplace_back(segments[i].id, vectors[i]);
-    }
+    const std::size_t batch_size = size_option(params, "batchSize", "ZCODE_CAMPP_BATCH_SIZE", 64);
+    const std::size_t threads = size_option(params, "threads", "ZCODE_CAMPP_THREADS", 2, 16);
 
     if (method == "embed_segments") {
+        if (params.contains("segmentIds") && params["segmentIds"].is_array()) {
+            std::map<std::string, Segment> by_id;
+            for (const auto &segment : segments) by_id.emplace(segment.id, segment);
+            std::vector<Segment> selected;
+            for (const auto &id : params["segmentIds"]) {
+                if (!id.is_string()) continue;
+                const auto found = by_id.find(id.get<std::string>());
+                if (found != by_id.end()) selected.push_back(found->second);
+            }
+            segments = std::move(selected);
+        }
+
+        const EmbeddingRun run = engine.embeddings(audio_path, wav_info, segments, model_path, true, batch_size, threads);
+        std::vector<std::pair<std::string, std::vector<float>>> entries;
+        for (std::size_t index = 0; index < segments.size() && index < run.embeddings.size(); ++index) {
+            if (!run.embeddings[index].empty()) entries.emplace_back(segments[index].id, run.embeddings[index]);
+        }
         json response{{"embeddings", embedding_entries(entries)}};
         if (!entries.empty()) {
             std::vector<float> mean(entries.front().second.size(), 0.0f);
+            std::size_t compatible_count = 0;
             for (const auto &[id, vector] : entries) {
                 if (vector.size() != mean.size()) continue;
+                ++compatible_count;
                 for (size_t i = 0; i < vector.size(); ++i) mean[i] += vector[i];
             }
-            for (float &value : mean) value /= static_cast<float>(entries.size());
-            response["embedding"] = normalize(std::move(mean));
+            if (compatible_count > 0) {
+                for (float &value : mean) value /= static_cast<float>(compatible_count);
+                response["embedding"] = normalize(std::move(mean));
+            }
         }
+        response["metrics"] = {{"batchCount", run.batch_count}};
         return response;
     }
 
     if (method == "diarize") {
-        const double threshold = std::getenv("ZCODE_CAMPP_CLUSTER_THRESHOLD")
-            ? std::atof(std::getenv("ZCODE_CAMPP_CLUSTER_THRESHOLD")) : 0.35;
-        std::map<std::string, std::vector<float>> by_id;
-        for (auto &[id, vector] : entries) by_id.emplace(id, std::move(vector));
-        std::vector<std::vector<float>> prototypes;
-        std::vector<int> assignments;
-        std::vector<double> assignment_scores;
-        for (const auto &segment : segments) {
-            const auto found = by_id.find(segment.id);
-            int cluster = -1;
-            double best = -1.0;
-            if (found != by_id.end()) {
-                for (size_t i = 0; i < prototypes.size(); ++i) {
-                    const double score = cosine(found->second, prototypes[i]);
-                    if (score > best) {
-                        best = score;
-                        cluster = static_cast<int>(i);
-                    }
-                }
-                if (cluster < 0 || best < threshold) {
-                    cluster = static_cast<int>(prototypes.size());
-                    prototypes.push_back(found->second);
-                } else {
-                    auto &prototype = prototypes[cluster];
-                    for (size_t i = 0; i < prototype.size(); ++i) prototype[i] = prototype[i] * 0.75f + found->second[i] * 0.25f;
-                    prototype = normalize(std::move(prototype));
-                }
+        const auto input_segments = params.value("segments", json::array());
+        std::vector<zcode::speaker::TimelineWindow> timeline;
+        const std::vector<Segment> windows = make_diarization_windows(segments, timeline);
+        zcode::speaker::ClusterResult clustering;
+        EmbeddingRun run;
+        if (!windows.empty()) {
+            run = engine.embeddings(audio_path, wav_info, windows, model_path, false, batch_size, threads);
+            std::vector<zcode::speaker::EmbeddingPoint> points;
+            points.reserve(windows.size());
+            for (std::size_t index = 0; index < windows.size(); ++index) {
+                points.push_back({windows[index].id, index, windows[index].start, windows[index].end,
+                                  index < run.embeddings.size() ? run.embeddings[index] : std::vector<float>{}});
             }
-            assignments.push_back(cluster);
-            assignment_scores.push_back(best >= 0.0 ? best : 0.5);
+            clustering = zcode::speaker::cluster_embeddings(points, cluster_options(params));
+        } else {
+            clustering.labels.assign(timeline.size(), -1);
         }
 
-        json response{{"segments", json::array()}};
-        const auto input_segments = params.value("segments", json::array());
-        for (size_t i = 0; i < input_segments.size(); ++i) {
+        const auto assignments = zcode::speaker::map_windows_to_segments(
+            timeline, clustering.labels, input_segments.is_array() ? input_segments.size() : 0);
+        json response{{"segments", json::array()}, {"algorithmVersion", "speaker-v2"}};
+        response["metrics"] = {
+            {"windowCount", windows.size()},
+            {"clusterCount", clustering.clusters.size()},
+            {"batchCount", run.batch_count},
+        };
+        response["clusters"] = json::array();
+        for (const auto &summary : clustering.clusters) {
+            response["clusters"].push_back({
+                {"clusterId", summary.id},
+                {"size", summary.size},
+                {"canonicalKey", summary.canonical_key},
+                {"prototype", summary.prototype},
+            });
+        }
+
+        if (!input_segments.is_array()) return response;
+        for (std::size_t i = 0; i < input_segments.size(); ++i) {
             json item = input_segments[i];
-            const int cluster = i < assignments.size() ? assignments[i] : -1;
-            if (cluster >= 0) {
-                item["speaker"] = "cluster_" + std::to_string(cluster);
+            const auto assignment = i < assignments.size() ? assignments[i] : zcode::speaker::SegmentAssignment{};
+            if (assignment.cluster >= 0) {
+                item["speaker"] = "cluster_" + std::to_string(assignment.cluster);
                 item["speakerMatch"] = "cluster";
-                item["speakerConfidence"] = i < assignment_scores.size() ? assignment_scores[i] : 0.5;
+                item["speakerConfidence"] = assignment.speaker_purity;
             } else {
                 item["speaker"] = "unknown";
                 item["speakerMatch"] = "unknown";
+                item["speakerConfidence"] = nullptr;
             }
+            item["speakerPurity"] = assignment.speaker_purity;
+            item["mixedSpeaker"] = assignment.mixed_speaker;
+            item["speakerWindowCount"] = assignment.window_count;
             response["segments"].push_back(std::move(item));
         }
         return response;

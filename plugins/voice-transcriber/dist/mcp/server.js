@@ -15558,10 +15558,14 @@ var bundledPackageRoot = path2.resolve(serverDirectory, "..", "..");
 var packageRoot = process.env.ZCODE_VOICE_PLUGIN_ROOT || await fs.access(path2.join(sourcePackageRoot, "package.json")).then(() => sourcePackageRoot).catch(() => bundledPackageRoot);
 var pluginPackage = JSON.parse(await fs.readFile(path2.join(packageRoot, "package.json"), "utf8"));
 var serverInfo = { name: "voice-transcriber", version: pluginPackage.version };
+var taskIdSchema = { type: "string", pattern: "^task_[a-f0-9]{16,64}$" };
+var learningIdSchema = { type: "string", pattern: "^learn_[a-f0-9]{16,64}$" };
+var segmentIdSchema = { type: "string", pattern: "^seg_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" };
+var personIdSchema = { type: "string", pattern: "^person_[^./\\\\\\s]{1,128}$" };
 var tools = [
   {
     name: "start_transcription",
-    description: "\u521B\u5EFA\u672C\u5730\u5F55\u97F3\u8F6C\u5199\u4EFB\u52A1\u3002\u9996\u6B21\u4F7F\u7528\u4F1A\u5728\u672C\u5730\u51C6\u5907\u6A21\u578B\uFF1B\u8FD4\u56DE taskId \u540E\u8BF7\u67E5\u8BE2 get_transcription_status\u3002",
+    description: "\u521B\u5EFA\u672C\u5730\u5F55\u97F3\u8F6C\u5199\u4EFB\u52A1\u3002\u9996\u6B21\u4F7F\u7528\u4F1A\u5728\u672C\u5730\u51C6\u5907\u6A21\u578B\uFF1B\u8FD4\u56DE taskId \u540E\u901A\u5E38\u76F4\u63A5\u8C03\u7528 wait_transcription\u3002",
     inputSchema: {
       type: "object",
       properties: {
@@ -15575,11 +15579,24 @@ var tools = [
     }
   },
   {
+    name: "wait_transcription",
+    description: "\u7B49\u5F85\u672C\u5730\u8F6C\u5199\u4EFB\u52A1\u8FDB\u5165\u5B8C\u6210\u3001\u5931\u8D25\u6216\u4E2D\u65AD\u72B6\u6001\uFF1B\u8D85\u65F6\u4F1A\u8FD4\u56DE\u5F53\u524D\u8FDB\u5EA6\uFF0C\u53EF\u7EE7\u7EED\u8C03\u7528\u3002\u5B8C\u6210\u540E\u4F7F\u7528 read_transcript \u8BFB\u53D6\u5168\u6587\u6216\u76F4\u63A5\u5904\u7406 artifacts \u6587\u4EF6\u3002",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: taskIdSchema,
+        timeoutSeconds: { type: "number", minimum: 0, maximum: 50, description: "\u672C\u6B21\u6700\u591A\u7B49\u5F85\u79D2\u6570\uFF0C\u9ED8\u8BA4 45 \u79D2" }
+      },
+      required: ["taskId"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "get_transcription_status",
     description: "\u67E5\u8BE2\u672C\u5730\u8F6C\u5199\u4EFB\u52A1\u72B6\u6001\u548C\u9636\u6BB5\u3002\u4EFB\u52A1\u672A\u5B8C\u6210\u65F6\u7EE7\u7EED\u8F6E\u8BE2\uFF1B\u5982\u679C\u957F\u5F55\u97F3\u4E2D\u9014\u5931\u8D25\u4F46\u5DF2\u6709\u5206\u5757\u5B8C\u6210\uFF0CpartialAvailable \u4F1A\u4E3A true\uFF0C\u53EF\u5148\u7528 read_transcript \u8BFB\u53D6\u5DF2\u4FDD\u5B58\u90E8\u5206\u3002",
     inputSchema: {
       type: "object",
-      properties: { taskId: { type: "string" } },
+      properties: { taskId: taskIdSchema },
       required: ["taskId"],
       additionalProperties: false
     }
@@ -15590,11 +15607,11 @@ var tools = [
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string" },
+        taskId: taskIdSchema,
         offset: { type: "integer", minimum: 0, description: "\u7247\u6BB5\u8D77\u59CB\u4F4D\u7F6E" },
         limit: { type: "integer", minimum: 1, maximum: 500, description: "\u672C\u6B21\u6700\u591A\u8FD4\u56DE\u7247\u6BB5\u6570" },
         includeText: { type: "boolean", description: "\u662F\u5426\u8FD4\u56DE\u5F53\u524D\u9875\u6587\u5B57" },
-        segmentIds: { type: "array", items: { type: "string" } }
+        segmentIds: { type: "array", items: segmentIdSchema }
       },
       required: ["taskId"],
       additionalProperties: false
@@ -15606,10 +15623,10 @@ var tools = [
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string" },
-        segmentIds: { type: "array", items: { type: "string" } },
-        personId: { type: "string" },
-        personName: { type: "string" },
+        taskId: taskIdSchema,
+        segmentIds: { type: "array", minItems: 1, items: segmentIdSchema },
+        personId: personIdSchema,
+        personName: { type: "string", minLength: 1, maxLength: 128 },
         autoLearn: { type: "boolean", description: "\u662F\u5426\u628A\u786E\u8BA4\u7247\u6BB5\u52A0\u5165\u672C\u5730\u5B66\u4E60\u6863\u6848\uFF0C\u9ED8\u8BA4 true" }
       },
       required: ["taskId", "segmentIds", "personName"],
@@ -15626,7 +15643,7 @@ var tools = [
     description: "\u56DE\u6EDA\u4E00\u6B21\u5DF2\u786E\u8BA4\u7684\u8BF4\u8BDD\u4EBA\u5B66\u4E60\u8BB0\u5F55\u3002",
     inputSchema: {
       type: "object",
-      properties: { learningId: { type: "string" } },
+      properties: { learningId: learningIdSchema },
       required: ["learningId"],
       additionalProperties: false
     }
@@ -15637,9 +15654,9 @@ var tools = [
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string" },
+        taskId: taskIdSchema,
         query: { type: "string" },
-        personId: { type: "string" },
+        personId: personIdSchema,
         limit: { type: "integer", minimum: 1, maximum: 100 }
       },
       required: ["taskId"],
@@ -15649,16 +15666,17 @@ var tools = [
 ];
 var sidecar = new SidecarClient({ packageRoot });
 function result(value) {
+  const safeValue = sanitizeForMcp(value);
   return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
-    structuredContent: value
+    content: [{ type: "text", text: JSON.stringify(safeValue, null, 2) }],
+    structuredContent: safeValue
   };
 }
 function errorResult(error2) {
   const value = {
     error: {
       code: error2?.code || "voice_transcriber_error",
-      message: error2?.message || String(error2)
+      message: sanitizeSensitiveText(error2?.message || String(error2))
     }
   };
   return {
@@ -15667,23 +15685,29 @@ function errorResult(error2) {
     isError: true
   };
 }
+function sanitizeForMcp(value) {
+  if (Array.isArray(value)) return value.map(sanitizeForMcp);
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return value;
+  const sanitized = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key.startsWith("_") || ["prototype", "embedding", "embeddings", "vector", "cacheidentity"].includes(key.toLowerCase())) continue;
+    sanitized[key] = sanitizeForMcp(item);
+  }
+  return sanitized;
+}
+function sanitizeSensitiveText(value) {
+  return String(value).replace(/"(?:prototype|embedding|embeddings|vector)"\s*:\s*\[[^\]]*\]/gi, '"voiceprint":"[redacted]"');
+}
 async function callTool(name, args = {}) {
   if (name === "start_transcription") return sidecar.call("start_transcription", args);
+  if (name === "wait_transcription") return sidecar.call("wait_transcription", args);
   if (name === "get_transcription_status") return sidecar.call("get_transcription_status", args);
   if (name === "read_transcript") return sidecar.call("read_transcript", args);
   if (name === "list_speakers") return sidecar.call("list_speakers", {});
   if (name === "search_transcript") return sidecar.call("search_transcript", args);
   if (name === "rollback_speaker_learning") return sidecar.call("rollback_learning", args);
-  if (name === "correct_speaker") {
-    const correction = await sidecar.call("correct_speaker", args);
-    if (args.autoLearn === false) return correction;
-    try {
-      const learning = await sidecar.call("enroll_from_correction", args);
-      return { ...correction, learning: { learningId: learning.learningId, applied: true } };
-    } catch (error2) {
-      return { ...correction, learning: { applied: false, code: error2.code, reason: error2.message } };
-    }
-  }
+  if (name === "correct_speaker") return sidecar.call("correct_speaker", args);
   throw Object.assign(new Error(`Unknown tool: ${name}`), { code: "unknown_tool" });
 }
 var server = new Server(serverInfo, { capabilities: { tools: {} } });
@@ -15697,9 +15721,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 var transport = new StdioServerTransport();
 await server.connect(transport);
+var shuttingDown = false;
 function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   sidecar.close();
   process.exit(0);
 }
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
+process.stdin.on("end", shutdown);

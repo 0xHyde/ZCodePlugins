@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Git tag to publish, for example v0.3.0"
+        description: "Existing Git tag to publish, for example v0.4.0-rc.1"
         required: true
         type: string
   push:
@@ -12,7 +12,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   windows-x64:
@@ -30,7 +30,7 @@ jobs:
           node-version: 22
 
       - name: Install plugin build dependencies
-        run: npm install --prefix plugins/voice-transcriber --ignore-scripts
+        run: npm ci --prefix plugins/voice-transcriber --ignore-scripts
 
       - name: Build bundled MCP server
         run: npm run build:voice-plugin
@@ -46,18 +46,32 @@ jobs:
             nasm
             mingw-w64-ucrt-x86_64-gcc
 
+      - name: Start with an empty Windows runtime directory
+        run: |
+          $runtime = "plugins/voice-transcriber/bin/win32/x64"
+          Remove-Item -Recurse -Force $runtime -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+
       - name: Build minimal redistributable ffmpeg
         shell: msys2 {0}
         env:
           ZCODE_RUNTIME_PLATFORM: win32
           ZCODE_RUNTIME_ARCH: x64
+          ZCODE_FFMPEG_REF: n7.1.1
+          ZCODE_FFMPEG_COMMIT: db69d06eeeab4f46da15030a80d539efb4503ca8
         run: bash tools/build-ffmpeg.sh
 
       - name: Build official SenseVoice runtime
-        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --native off --jobs 2
+        run: npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9 --native off --jobs 2
 
       - name: Build CAM++ ONNX Runtime adapter
-        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || '065629c313eaf1a01c65c640c46d77e61e9607b4' }} --ort-version 1.12.0 --jobs 2
+        run: npm run build:campp -- --ref 065629c313eaf1a01c65c640c46d77e61e9607b4 --ort-version 1.12.0 --jobs 2
+
+      - name: Test native speaker clustering
+        run: |
+          cmake -S plugins/voice-transcriber/native -B build/speaker-tests -DBUILD_CAMPP_ADAPTER=OFF -DBUILD_SPEAKER_CLUSTERING_TESTS=ON
+          cmake --build build/speaker-tests --config Release
+          ctest --test-dir build/speaker-tests --output-on-failure -C Release
 
       - name: Run JavaScript tests and plugin validation
         shell: cmd
@@ -69,10 +83,17 @@ jobs:
       - name: Verify Windows runtime files
         run: |
           $runtime = "plugins/voice-transcriber/bin/win32/x64"
-          foreach ($file in @("llama-funasr-sensevoice.exe", "campp-adapter.exe", "ffmpeg.exe", "onnxruntime.dll")) {
+          foreach ($file in @(
+            "llama-funasr-sensevoice.exe", "campp-adapter.exe", "ffmpeg.exe", "onnxruntime.dll",
+            "SENSEVOICE_LICENSE.txt", "LLAMA_CPP_LICENSE.txt", "3D_SPEAKER_LICENSE.txt",
+            "NLOHMANN_JSON_LICENSE.txt", "ORT_LICENSE.txt", "ORT_THIRD_PARTY_NOTICES.txt",
+            "FFMPEG_LICENSE.txt"
+          )) {
             if (!(Test-Path (Join-Path $runtime $file))) { throw "Runtime file missing: $file" }
           }
           & (Join-Path $runtime "ffmpeg.exe") -version | Out-Null
+          $response = '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}' | & (Join-Path $runtime "campp-adapter.exe") --stdio | ConvertFrom-Json
+          if ($response.error.code -ne "campp_failed") { throw "CAM++ adapter protocol smoke test failed" }
 
       - name: Prepare Windows release assets
         env:
@@ -114,19 +135,33 @@ jobs:
           node-version: 22
 
       - name: Install plugin build dependencies
-        run: npm install --prefix plugins/voice-transcriber --ignore-scripts
+        run: npm ci --prefix plugins/voice-transcriber --ignore-scripts
 
       - name: Build bundled MCP server
         run: npm run build:voice-plugin
 
+      - name: Start with an empty macOS runtime directory
+        run: |
+          rm -rf plugins/voice-transcriber/bin/darwin/arm64
+          mkdir -p plugins/voice-transcriber/bin/darwin/arm64
+
       - name: Build minimal redistributable ffmpeg
+        env:
+          ZCODE_FFMPEG_REF: n7.1.1
+          ZCODE_FFMPEG_COMMIT: db69d06eeeab4f46da15030a80d539efb4503ca8
         run: npm run build:ffmpeg
 
       - name: Build official SenseVoice runtime
-        run: npm run build:sensevoice -- --ref ${{ vars.ZCODE_SENSEVOICE_REF || 'runtime-llamacpp-v0.1.9' }} --native on --jobs 2
+        run: npm run build:sensevoice -- --ref runtime-llamacpp-v0.1.9 --native on --jobs 2
 
       - name: Build CAM++ ONNX Runtime adapter
-        run: npm run build:campp -- --ref ${{ vars.ZCODE_3D_SPEAKER_REF || '065629c313eaf1a01c65c640c46d77e61e9607b4' }} --ort-version 1.12.0 --jobs 2
+        run: npm run build:campp -- --ref 065629c313eaf1a01c65c640c46d77e61e9607b4 --ort-version 1.12.0 --jobs 2
+
+      - name: Test native speaker clustering
+        run: |
+          cmake -S plugins/voice-transcriber/native -B build/speaker-tests -DBUILD_CAMPP_ADAPTER=OFF -DBUILD_SPEAKER_CLUSTERING_TESTS=ON
+          cmake --build build/speaker-tests --config Release
+          ctest --test-dir build/speaker-tests --output-on-failure -C Release
 
       - name: Run JavaScript tests and plugin validation
         run: |
@@ -135,13 +170,23 @@ jobs:
 
       - name: Verify macOS runtime files
         run: |
-          test -x plugins/voice-transcriber/bin/darwin/arm64/llama-funasr-sensevoice
-          test -x plugins/voice-transcriber/bin/darwin/arm64/campp-adapter
-          test -x plugins/voice-transcriber/bin/darwin/arm64/ffmpeg
-          test -f plugins/voice-transcriber/bin/darwin/arm64/libonnxruntime.1.12.0.dylib
-          plugins/voice-transcriber/bin/darwin/arm64/ffmpeg -version >/dev/null
+          runtime="plugins/voice-transcriber/bin/darwin/arm64"
+          test -x "$runtime/llama-funasr-sensevoice"
+          test -x "$runtime/campp-adapter"
+          test -x "$runtime/ffmpeg"
+          test -f "$runtime/libonnxruntime.1.12.0.dylib"
+          for file in SENSEVOICE_LICENSE.txt LLAMA_CPP_LICENSE.txt 3D_SPEAKER_LICENSE.txt \
+            NLOHMANN_JSON_LICENSE.txt ORT_LICENSE.txt ORT_THIRD_PARTY_NOTICES.txt FFMPEG_LICENSE.txt; do
+            test -f "$runtime/$file"
+          done
+          "$runtime/ffmpeg" -version >/dev/null
           printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}' \
-            | plugins/voice-transcriber/bin/darwin/arm64/campp-adapter --stdio
+            | "$runtime/campp-adapter" --stdio
+          for executable in llama-funasr-sensevoice campp-adapter; do
+            otool -l "$runtime/$executable" | grep -A3 'LC_BUILD_VERSION' | grep -q 'minos 12.0'
+          done
+          rpaths="$(otool -l "$runtime/campp-adapter" | awk '$1 == "cmd" && $2 == "LC_RPATH" { getline; getline; print $2 }')"
+          test "$rpaths" = "@loader_path"
 
       - name: Ad-hoc sign macOS runtime
         run: |
@@ -178,6 +223,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: [windows-x64, macos-arm64]
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -186,6 +233,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install plugin build dependencies
+        run: npm ci --prefix plugins/voice-transcriber --ignore-scripts
+
+      - name: Rebuild and verify the MCP server to be packaged
+        run: |
+          npm run build:voice-plugin
+          npm run test:voice-transcriber
+          npm run validate
+          node --check plugins/voice-transcriber/dist/mcp/server.js
 
       - uses: actions/download-artifact@v4
         with:
@@ -202,25 +259,66 @@ jobs:
       - name: Package plugin and model manifest
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          FFMPEG_REF: ${{ vars.ZCODE_FFMPEG_REF || 'n7.1.1' }}
+          FFMPEG_REF: n7.1.1
+          FFMPEG_COMMIT: db69d06eeeab4f46da15030a80d539efb4503ca8
         run: |
+          plugin_version="$(node -p "require('./plugins/voice-transcriber/package.json').version")"
+          manifest_version="$(node -p "require('./plugins/voice-transcriber/.zcode-plugin/plugin.json').version")"
+          marketplace_version="$(node -p "require('./marketplace.json').plugins.find(plugin => plugin.name === 'voice-transcriber').version")"
+          test "$RELEASE_TAG" = "v${plugin_version}"
+          test "$manifest_version" = "$plugin_version"
+          test "$marketplace_version" = "$plugin_version"
           cp model-manifest.json release-assets/model-manifest.json
-          curl -fL "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/${FFMPEG_REF}.tar.gz" \
-            -o "release-assets/ffmpeg-${FFMPEG_REF}-source.tar.gz"
+          curl -fL --retry 5 --retry-all-errors --retry-delay 2 \
+            "https://github.com/FFmpeg/FFmpeg/archive/${FFMPEG_COMMIT}.tar.gz" \
+            -o "release-assets/ffmpeg-${FFMPEG_REF}-${FFMPEG_COMMIT}-source.tar.gz"
           mkdir -p release-assets/plugin-package
           cp -R plugins/voice-transcriber release-assets/plugin-package/voice-transcriber
           rm -rf release-assets/plugin-package/voice-transcriber/node_modules
+          rm -rf release-assets/plugin-package/voice-transcriber/bin/darwin \
+            release-assets/plugin-package/voice-transcriber/bin/win32 \
+            release-assets/plugin-package/voice-transcriber/bin/linux
           for spec in "darwin-arm64:darwin/arm64" "win32-x64:win32/x64"; do
             prefix="${spec%%:*}"
             target="release-assets/plugin-package/voice-transcriber/bin/${spec#*:}"
+            rm -rf "$target"
             mkdir -p "$target"
             while IFS= read -r file; do
               name="${file##*/}"
               cp "$file" "$target/${name#${prefix}-}"
             done < <(find release-assets -type f -name "${prefix}-*" -not -path '*/plugin-package/*')
           done
+          chmod 755 \
+            release-assets/plugin-package/voice-transcriber/bin/darwin/arm64/llama-funasr-sensevoice \
+            release-assets/plugin-package/voice-transcriber/bin/darwin/arm64/campp-adapter \
+            release-assets/plugin-package/voice-transcriber/bin/darwin/arm64/ffmpeg
           (cd release-assets/plugin-package && zip -q -r "../voice-transcriber-plugin-${RELEASE_TAG}.zip" voice-transcriber)
           rm -rf release-assets/plugin-package
+
+      - name: Verify final plugin ZIP
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          package="release-assets/voice-transcriber-plugin-${RELEASE_TAG}.zip"
+          unpacked="$(mktemp -d)"
+          unzip -q "$package" -d "$unpacked"
+          test -f "$unpacked/voice-transcriber/dist/mcp/server.js"
+          test -f "$unpacked/voice-transcriber/LICENSE"
+          test -f "$unpacked/voice-transcriber/THIRD_PARTY_NOTICES.md"
+          test -x "$unpacked/voice-transcriber/bin/darwin/arm64/campp-adapter"
+          test -f "$unpacked/voice-transcriber/bin/win32/x64/campp-adapter.exe"
+          node --check "$unpacked/voice-transcriber/dist/mcp/server.js"
+          node tools/verify-runtime-tree.mjs \
+            --root "$unpacked/voice-transcriber/bin" \
+            --manifest release-assets/runtime-manifest.json
+          if find "$unpacked/voice-transcriber" -type d -name node_modules -print -quit | grep -q .; then
+            echo "plugin ZIP must not contain node_modules" >&2
+            exit 1
+          fi
+          if find "$unpacked/voice-transcriber" -type f \( -name '*.gguf' -o -name '*.onnx' \) -print -quit | grep -q .; then
+            echo "plugin ZIP must not contain model weights" >&2
+            exit 1
+          fi
 
       - name: Publish GitHub Release
         env:
@@ -228,11 +326,37 @@ jobs:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           mapfile -d '' assets < <(find release-assets -type f -print0)
+          expected_prerelease=false
+          release_args=(
+            --repo "$GITHUB_REPOSITORY"
+            --title "voice-transcriber $RELEASE_TAG"
+            --generate-notes
+            --verify-tag
+          )
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            expected_prerelease=true
+            release_args+=(--prerelease --latest=false)
+          fi
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            actual_prerelease="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease')"
+            test "$actual_prerelease" = "$expected_prerelease"
             gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$RELEASE_TAG" "${assets[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "voice-transcriber $RELEASE_TAG" \
-              --generate-notes
+            gh release create "$RELEASE_TAG" "${assets[@]}" "${release_args[@]}"
           fi
+
+      - name: Verify published assets through public URLs
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          public="$(mktemp -d)"
+          trap 'rm -rf "$public"' EXIT
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+          package="voice-transcriber-plugin-${RELEASE_TAG}.zip"
+          curl -fL --retry 8 --retry-all-errors --retry-delay 3 \
+            "$base/model-manifest.json" -o "$public/model-manifest.json"
+          curl -fL --retry 8 --retry-all-errors --retry-delay 3 \
+            "$base/$package" -o "$public/$package"
+          cmp release-assets/model-manifest.json "$public/model-manifest.json"
+          test "$(sha256sum "release-assets/$package" | cut -d ' ' -f 1)" = \
+            "$(sha256sum "$public/$package" | cut -d ' ' -f 1)"

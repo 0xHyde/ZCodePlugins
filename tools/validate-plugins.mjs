@@ -31,6 +31,7 @@ function frontmatter(text, file) {
 
 const marketplace = await readJson(path.join(root, "marketplace.json"));
 if (!Array.isArray(marketplace.plugins)) throw new Error("marketplace.json: plugins must be an array");
+const semanticVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 for (const entry of marketplace.plugins) {
   const pluginPath = path.resolve(root, entry.source);
@@ -39,12 +40,25 @@ for (const entry of marketplace.plugins) {
   if (manifest.name !== entry.name) throw new Error(`${manifestPath}: name does not match marketplace entry`);
   if (manifest.version !== entry.version) throw new Error(`${manifestPath}: version does not match marketplace entry`);
   if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(manifest.name)) throw new Error(`${manifestPath}: invalid plugin name`);
-  if (!/^\d+\.\d+\.\d+$/.test(manifest.version || "")) throw new Error(`${manifestPath}: invalid semantic version`);
+  if (!semanticVersion.test(manifest.version || "")) throw new Error(`${manifestPath}: invalid semantic version`);
 
   const packagePath = path.join(pluginPath, "package.json");
   if (await exists(packagePath)) {
     const packageJson = await readJson(packagePath);
     if (packageJson.version !== manifest.version) throw new Error(`${packagePath}: version does not match plugin manifest`);
+    if (packageJson.license !== manifest.license) throw new Error(`${packagePath}: license does not match plugin manifest`);
+  }
+
+  const packageLockPath = path.join(pluginPath, "package-lock.json");
+  if (await exists(packageLockPath)) {
+    const packageLock = await readJson(packageLockPath);
+    if (packageLock.version !== manifest.version || packageLock.packages?.[""]?.version !== manifest.version) {
+      throw new Error(`${packageLockPath}: version does not match plugin manifest`);
+    }
+  }
+
+  if (manifest.license && !(await exists(path.join(pluginPath, "LICENSE")))) {
+    throw new Error(`${pluginPath}: manifest declares ${manifest.license} but the standalone plugin has no LICENSE`);
   }
 
   if (typeof manifest.skills === "string") {
