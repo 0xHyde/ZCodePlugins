@@ -1138,8 +1138,10 @@ test("heavy transcription jobs run FIFO with one global worker while status rema
     assert.equal(secondStatus.status, "queued");
     assert.ok(Date.now() - startedAt < 120, "status request should not wait for the heavy queue");
     const queueStartedAt = Date.now();
-    assert.equal((await waitFor(server, first.taskId)).status, "completed");
-    assert.equal((await waitFor(server, second.taskId)).status, "completed");
+    const firstCompleted = await waitFor(server, first.taskId);
+    assert.equal(firstCompleted.status, "completed", JSON.stringify(firstCompleted));
+    const secondCompleted = await waitFor(server, second.taskId);
+    assert.equal(secondCompleted.status, "completed", JSON.stringify(secondCompleted));
     assert.ok(Date.now() - queueStartedAt >= 250, "two delayed jobs should execute serially");
   } finally {
     await server.close();
