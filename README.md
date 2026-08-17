@@ -45,7 +45,7 @@ https://github.com/0xHyde/ZCodePlugins
 ```text
 ${CLAUDE_PLUGIN_DATA}/
 ├── models/       # SenseVoice、FSMN-VAD、CAM++
-├── runtimes/     # 旧版本运行时缓存（v0.3.0 通常不使用）
+├── runtimes/     # 兼容旧 manifest 的运行时缓存（当前包内置 runtime）
 ├── artifacts/    # 完整转写文件
 ├── tasks/        # 任务索引
 ├── cache/        # 分阶段 ASR / Speaker 缓存

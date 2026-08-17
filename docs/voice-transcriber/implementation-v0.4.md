@@ -18,7 +18,7 @@
 
 ## 2. 当前基线与发布判断
 
-当前工作区已将 package、插件 manifest 与 Marketplace 统一准备为 `v0.4.0-rc.1`，但尚未提交、打 tag 或发布。源码与 macOS 本地候选已经完成测试；仓库内跟踪的 Windows runtime 仍是旧构建，必须由本版 GitHub Actions 产物替换并通过真实 Windows 模型推理、中文路径、长录音和峰值内存验证后，才可创建候选 tag。公开发布前还需由仓库所有者确认 Apache-2.0 版权署名主体。稳定版另外需要 3/4 人标注集质量评测。
+当前工作区已将 package、插件 manifest 与 Marketplace 统一为 `v0.4.0-rc.1`。源码候选与 macOS ARM64、Windows x64 runtime 均已由同一源码提交的 GitHub Actions 构建并通过 CI 门禁，产物也已同步回仓库；最终 tag 必须指向这次 runtime 更新后的提交，并按 prerelease 发布。真实 Windows 模型推理、中文路径、长录音和峰值内存验证仍是稳定版门槛。Apache-2.0 版权主体为 0xHyde；稳定版另外需要 3/4 人标注集质量评测。
 
 ## 3. 产品闭环
 

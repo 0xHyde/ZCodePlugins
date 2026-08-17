@@ -43,7 +43,7 @@ macOS ARM 使用 native 优化构建；Windows 使用可移植 CPU 构建，避�
 
 稳定版发布前还必须在最终 ZIP 上分别完成 macOS ARM64 与真实 Windows x64 的模型推理 smoke test。当前 CI 的协议测试只能证明程序和动态库能够启动，不能替代 Windows 真实录音的准确率、峰值内存与长录音验证。
 
-`v0.4.0-rc.1` 也不能直接使用仓库当前的旧 Windows runtime 打 tag。必须先由本版源码在 GitHub Actions 重建 Windows x64 产物、同步回仓库，再在真实 Windows 电脑上验证模型推理、中文路径和曾触发 GGML 内存崩溃的长录音。公开发布前还要由仓库所有者确认 Apache-2.0 作品的版权署名主体。
+`v0.4.0-rc.1` 候选的源码、Windows x64 和 macOS ARM64 runtime 已由对应源码提交的 GitHub Actions 构建、验证并同步回仓库；本次 Release 仍按 prerelease 发布，不设为 latest。真实 Windows 模型推理、中文路径和曾触发 GGML 内存崩溃的长录音验证仍是稳定版门槛。Apache-2.0 项目的版权主体为 0xHyde。
 
 ## 发布边界
 
