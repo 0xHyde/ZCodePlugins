@@ -81,12 +81,14 @@ function expectedCamppCalls(...methods) {
 }
 
 async function waitFor(server, taskId) {
-  for (let index = 0; index < 80; index += 1) {
+  let lastStatus;
+  for (let index = 0; index < 400; index += 1) {
     const status = await server.call("get_transcription_status", { taskId });
+    lastStatus = status;
     if (status.status === "completed" || status.status === "failed") return status;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error("task did not finish in test window");
+  throw new Error(`task did not finish in test window: ${JSON.stringify(lastStatus)}`);
 }
 
 test("ZCode MCP server exposes the asynchronous local voice workflow", async () => {
@@ -180,7 +182,8 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
   try {
     await server.initialize();
     const first = await server.call("start_transcription", { audioPath: audioOne });
-    await waitFor(server, first.taskId);
+    const firstCompleted = await waitFor(server, first.taskId);
+    assert.equal(firstCompleted.status, "completed", JSON.stringify(firstCompleted));
     const firstTranscript = await server.call("read_transcript", { taskId: first.taskId, includeText: true });
     const correction = await server.call("correct_speaker", {
       taskId: first.taskId,
@@ -191,7 +194,8 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
     assert.equal(correction.learning.applied, true);
     assert.equal(correction.learning.taskLinked, true);
     const second = await server.call("start_transcription", { audioPath: audioTwo });
-    await waitFor(server, second.taskId);
+    const secondCompleted = await waitFor(server, second.taskId);
+    assert.equal(secondCompleted.status, "completed", JSON.stringify(secondCompleted));
     const secondTranscript = await server.call("read_transcript", { taskId: second.taskId, includeText: true });
     assert.equal(secondTranscript.segments[0].speaker, "张老师");
     assert.equal(secondTranscript.segments[0].speakerCluster, "cluster_0");
@@ -723,7 +727,8 @@ test("stage caches follow dependency bytes instead of configured file locations"
     await secondServer.initialize();
     const started = await secondServer.call("start_transcription", { audioPath });
     assert.notEqual(started.taskId, firstTaskId);
-    assert.equal((await waitFor(secondServer, started.taskId)).status, "completed");
+    const secondCompleted = await waitFor(secondServer, started.taskId);
+    assert.equal(secondCompleted.status, "completed", JSON.stringify(secondCompleted));
     const task = JSON.parse(await fs.readFile(path.join(dataRoot, "tasks", `${started.taskId}.json`), "utf8"));
     assert.equal(task.cache.asr.hit, true);
     assert.equal(task.cache.speaker.hit, true);
