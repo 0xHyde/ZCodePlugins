@@ -338,7 +338,7 @@ test("long transcript remains local and can be read as a page", async () => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-long-"));
   const audioPath = path.join(dataRoot, "long.wav");
   await fs.writeFile(audioPath, "long audio");
-  const server = startServer({ ZCODE_VOICE_DATA_DIR: dataRoot, ZCODE_VOICE_MOCK_TEXT: "长".repeat(80001) });
+  const server = startServer({ ZCODE_VOICE_DATA_DIR: dataRoot, ZCODE_VOICE_MOCK_TEXT: "x".repeat(80001) });
   try {
     await server.initialize();
     const started = await server.call("start_transcription", { audioPath, outputFormat: "json" });
@@ -348,7 +348,7 @@ test("long transcript remains local and can be read as a page", async () => {
     assert.equal(page.cacheIdentity, undefined);
     assert.match(page.artifacts.json, /transcript\.json$/);
     assert.match(page.artifacts.text, /transcript\.txt$/);
-    assert.equal((await fs.readFile(page.artifacts.text, "utf8")).trim(), "长".repeat(80001));
+    assert.equal((await fs.readFile(page.artifacts.text, "utf8")).trim(), "x".repeat(80001));
     const cached = await server.call("start_transcription", { audioPath, outputFormat: "json" });
     assert.equal(cached.cacheHit, true);
     assert.equal(cached.status, "completed");

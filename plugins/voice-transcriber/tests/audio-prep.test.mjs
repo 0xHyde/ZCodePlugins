@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareAudio, splitAudio } from "../scripts/audio-prep.mjs";
+import { commandAvailable } from "../scripts/runtime.mjs";
 
 function makeWav(durationSeconds = 0.01) {
   const samples = Buffer.alloc(Math.round(16000 * durationSeconds) * 2);
@@ -48,10 +49,10 @@ test("audio preparation reports a missing converter for compressed audio", async
   await fs.rm(dataRoot, { recursive: true, force: true });
 });
 
-test("long-audio fallback splits a WAV into bounded SenseVoice chunks", async () => {
+test("long-audio fallback splits a WAV into bounded SenseVoice chunks", async (t) => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-audio-split-"));
   const audioPath = path.join(dataRoot, "input.wav");
-  const converter = path.join(
+  const bundledConverter = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     "..",
     "bin",
@@ -59,8 +60,14 @@ test("long-audio fallback splits a WAV into bounded SenseVoice chunks", async ()
     process.arch,
     process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
   );
+  const bundledStat = await fs.stat(bundledConverter).catch(() => null);
+  const converter = bundledStat?.isFile() ? bundledConverter : "ffmpeg";
   await fs.writeFile(audioPath, makeWav(2.2));
   try {
+    if (!bundledStat?.isFile() && !await commandAvailable("ffmpeg")) {
+      t.skip("no ffmpeg runtime is available in this test environment");
+      return;
+    }
     const split = await splitAudio({ audioPath, dataRoot, taskId: "test", converter, chunkSeconds: 1 });
     assert.equal(split.chunks.length, 3);
     assert.deepEqual(split.chunks.map((chunk) => chunk.offset), [0, 1, 2]);
