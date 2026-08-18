@@ -19,18 +19,44 @@ input.on("line", (line) => {
   let result;
   if (request.method === "diarize") {
     result = {
-      algorithmVersion: "speaker-v2",
-      segments: (request.params.segments || []).map((segment) => ({
-        ...segment,
-        speaker: "cluster_0",
-        speakerMatch: "cluster",
-        speakerConfidence: 0.9,
-        speakerPurity: 0.9,
-        mixedSpeaker: false,
-        speakerWindowCount: 2,
-      })),
-      clusters: [{ clusterId: 0, size: 2, canonicalKey: "seg_0001:w0", prototype: embedding }],
-      metrics: { windowCount: 2, clusterCount: 1, batchCount: 1 },
+      algorithmVersion: "speaker-v4",
+      segments: (request.params.segments || []).map((segment) => {
+        const start = Number.isFinite(segment.start) ? segment.start : 0;
+        const end = Number.isFinite(segment.end) && segment.end > start ? segment.end : start + 2;
+        return {
+          ...segment,
+          start,
+          end,
+          speaker: "cluster_0",
+          speakerCluster: "cluster_0",
+          dominantSpeaker: "cluster_0",
+          speakerMatch: "cluster",
+          speakerConfidence: 0.9,
+          speakerPurity: 0.9,
+          mixedSpeaker: false,
+          speakerStability: "stable",
+          speakerSpans: [{ start, end, speaker: "cluster_0", confidence: 0.9 }],
+          speakerWindowCount: 2,
+        };
+      }),
+      clusters: [{ clusterId: 0, size: 2, windowCount: 2, stability: "stable", canonicalKey: "seg_0001:w0", prototype: embedding }],
+      metrics: {
+        windowCount: 2,
+        validWindowCount: 2,
+        noiseWindowCount: 0,
+        clusterCount: 1,
+        postThresholdClusterCount: 1,
+        speakerCountExceeded: false,
+        forcedMergeCount: 0,
+        transientClusterCount: 0,
+        rawTransientSpanCount: 0,
+        microNoiseSpanCount: 0,
+        bridgedTransientSpanCount: 0,
+        suppressedTransientSpanCount: 0,
+        rawMixedSegmentCount: 0,
+        presentationMixedSegmentCount: 0,
+        batchCount: 1,
+      },
     };
   } else if (request.method === "embed_segments") {
     result = {

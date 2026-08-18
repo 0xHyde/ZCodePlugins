@@ -482,10 +482,21 @@ std::size_t size_option(const json &params, const char *key, const char *environ
 
 zcode::speaker::ClusterOptions cluster_options(const json &params) {
     zcode::speaker::ClusterOptions options;
-    options.cluster_threshold = real_option(params, "clusterThreshold", "ZCODE_CAMPP_CLUSTER_THRESHOLD", 0.35);
+    options.cluster_threshold = real_option(params, "clusterThreshold", "ZCODE_CAMPP_CLUSTER_THRESHOLD", 0.45);
     options.min_cluster_size = size_option(params, "minClusterSize", "ZCODE_CAMPP_MIN_CLUSTER_SIZE", 2);
     options.min_speakers = size_option(params, "minSpeakers", "ZCODE_CAMPP_MIN_SPEAKERS", 1);
-    options.max_speakers = size_option(params, "maxSpeakers", "ZCODE_CAMPP_MAX_SPEAKERS", 15);
+    options.max_speakers = size_option(params, "maxSpeakers", "ZCODE_CAMPP_MAX_SPEAKERS", 64);
+    return options;
+}
+
+zcode::speaker::TimelineOptions timeline_options(const json &params) {
+    zcode::speaker::TimelineOptions options;
+    options.micro_noise_max_seconds = real_option(
+        params, "microNoiseMaxSeconds", "ZCODE_CAMPP_MICRO_NOISE_MAX_SECONDS", 0.40);
+    options.transient_bridge_max_seconds = real_option(
+        params, "transientBridgeMaxSeconds", "ZCODE_CAMPP_TRANSIENT_BRIDGE_MAX_SECONDS", 1.50);
+    options.bridge_max_gap_seconds = real_option(
+        params, "transientBridgeMaxGapSeconds", "ZCODE_CAMPP_TRANSIENT_BRIDGE_MAX_GAP_SECONDS", 0.50);
     return options;
 }
 
@@ -524,7 +535,7 @@ std::vector<Segment> make_diarization_windows(const std::vector<Segment> &segmen
             // identical input segments must not change cluster IDs.
             const std::string key = segment.id + ":w" + std::to_string(window_index);
             windows.push_back({key, start, end, segment.input_index});
-            timeline.push_back({segment.input_index, key, start, end});
+            timeline.push_back({segment.input_index, key, start, end, segment.start, segment.end});
         }
     }
     return windows;
@@ -602,14 +613,28 @@ json handle(const json &request, CamppEngine &engine) {
             clustering = zcode::speaker::cluster_embeddings(points, cluster_options(params));
         } else {
             clustering.labels.assign(timeline.size(), -1);
+            clustering.noise_window_count = timeline.size();
         }
 
-        const auto assignments = zcode::speaker::map_windows_to_segments(
-            timeline, clustering.labels, input_segments.is_array() ? input_segments.size() : 0);
-        json response{{"segments", json::array()}, {"algorithmVersion", "speaker-v2"}};
+        const auto timeline_result = zcode::speaker::assign_speaker_timeline(
+            timeline, clustering, input_segments.is_array() ? input_segments.size() : 0, timeline_options(params));
+        const auto &assignments = timeline_result.assignments;
+        json response{{"segments", json::array()}, {"algorithmVersion", "speaker-v4"}};
         response["metrics"] = {
             {"windowCount", windows.size()},
+            {"validWindowCount", windows.size() - clustering.noise_window_count},
+            {"noiseWindowCount", clustering.noise_window_count},
             {"clusterCount", clustering.clusters.size()},
+            {"postThresholdClusterCount", clustering.post_threshold_cluster_count},
+            {"speakerCountExceeded", clustering.speaker_count_exceeded},
+            {"forcedMergeCount", clustering.forced_merge_count},
+            {"transientClusterCount", clustering.transient_cluster_count},
+            {"rawTransientSpanCount", timeline_result.metrics.raw_transient_span_count},
+            {"microNoiseSpanCount", timeline_result.metrics.micro_noise_span_count},
+            {"bridgedTransientSpanCount", timeline_result.metrics.bridged_transient_span_count},
+            {"suppressedTransientSpanCount", timeline_result.metrics.suppressed_transient_span_count},
+            {"rawMixedSegmentCount", timeline_result.metrics.raw_mixed_segment_count},
+            {"presentationMixedSegmentCount", timeline_result.metrics.presentation_mixed_segment_count},
             {"batchCount", run.batch_count},
         };
         response["clusters"] = json::array();
@@ -619,6 +644,7 @@ json handle(const json &request, CamppEngine &engine) {
                 {"size", summary.size},
                 {"canonicalKey", summary.canonical_key},
                 {"prototype", summary.prototype},
+                {"stability", summary.stability},
             });
         }
 
@@ -626,18 +652,47 @@ json handle(const json &request, CamppEngine &engine) {
         for (std::size_t i = 0; i < input_segments.size(); ++i) {
             json item = input_segments[i];
             const auto assignment = i < assignments.size() ? assignments[i] : zcode::speaker::SegmentAssignment{};
-            if (assignment.cluster >= 0) {
-                item["speaker"] = "cluster_" + std::to_string(assignment.cluster);
+            const std::string dominant_speaker = assignment.cluster >= 0
+                ? "cluster_" + std::to_string(assignment.cluster)
+                : "unknown";
+            if (assignment.cluster >= 0 && assignment.mixed_speaker) {
+                item.erase("speakerCluster");
+                item.erase("personId");
+                item["speaker"] = "mixed";
+                item["dominantSpeaker"] = dominant_speaker;
+                item["speakerMatch"] = "mixed";
+                item["speakerConfidence"] = nullptr;
+                item["speakerStability"] = "mixed";
+            } else if (assignment.cluster >= 0) {
+                item["speaker"] = dominant_speaker;
+                item["dominantSpeaker"] = dominant_speaker;
+                item["speakerCluster"] = dominant_speaker;
                 item["speakerMatch"] = "cluster";
                 item["speakerConfidence"] = assignment.speaker_purity;
+                item["speakerStability"] = assignment.cluster < static_cast<int>(clustering.clusters.size())
+                    ? clustering.clusters[assignment.cluster].stability
+                    : "stable";
             } else {
+                item.erase("speakerCluster");
+                item.erase("personId");
                 item["speaker"] = "unknown";
+                item["dominantSpeaker"] = nullptr;
                 item["speakerMatch"] = "unknown";
                 item["speakerConfidence"] = nullptr;
+                item["speakerStability"] = "unknown";
             }
             item["speakerPurity"] = assignment.speaker_purity;
             item["mixedSpeaker"] = assignment.mixed_speaker;
             item["speakerWindowCount"] = assignment.window_count;
+            item["speakerSpans"] = json::array();
+            for (const auto &span : assignment.speaker_spans) {
+                item["speakerSpans"].push_back({
+                    {"start", span.start},
+                    {"end", span.end},
+                    {"speaker", span.cluster >= 0 ? "cluster_" + std::to_string(span.cluster) : "unknown"},
+                    {"confidence", span.confidence},
+                });
+            }
             response["segments"].push_back(std::move(item));
         }
         return response;

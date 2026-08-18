@@ -1,6 +1,6 @@
 # voice-transcriber v0.4 实施方案
 
-> 本文是设计与验收计划，不是已发布功能清单。当前工作区已完成 speaker-v2、MCP `start → wait → read`、模型/runtime SHA 阶段缓存、分块 checkpoint 恢复、声纹输出隔离及最终 ZIP runtime SHA 校验。尚未完成的验收项包括真实 Windows 长录音与峰值内存测试、3/4 人标注集评测、运行中主动取消、商业签名和 macOS notarization。
+> 本文是设计与验收计划，不是已发布功能清单。当前工作区已完成 speaker-v4、MCP `start → wait → read`、模型/runtime SHA 阶段缓存、分块 checkpoint 恢复、声纹输出隔离及最终 ZIP runtime SHA 校验。尚未完成的验收项包括真实 Windows 长录音与峰值内存测试、3/4 人标注集评测、运行中主动取消、商业签名和 macOS notarization。
 
 ## 1. 目标
 
@@ -79,9 +79,9 @@ ZCode
 | Profile match | Speaker cluster prototype、档案 revision、匹配配置 | 只重匹配已知人 |
 | Render | 当前 transcript revision、输出格式 | 只重写产物 |
 
-`v0.3.x` 缓存不得被 `speaker-v2` 直接复用。旧任务文件可以读取，但必须标记 `legacyPipeline`，需要重新分析时生成新 revision。
+`v0.3.x`、`speaker-v2` 和 `speaker-v3` 缓存不得作为 `speaker-v4` stage cache 复用。旧任务文件可以读取，但必须标记 `legacyPipeline`，需要重新分析时生成新 revision。
 
-## 6. Speaker Analysis v2
+## 6. Speaker Analysis v4
 
 ### 6.1 处理流程
 
@@ -104,15 +104,20 @@ VAD 只表示“有人声”，不承担换人判断。第一版使用可解释�
 
 ```json
 {
-  "algorithmVersion": "speaker-v2",
+  "algorithmVersion": "speaker-v4",
   "segments": [
     {
       "id": "seg_0001",
       "speaker": "cluster_0",
+      "dominantSpeaker": "cluster_0",
+      "speakerCluster": "cluster_0",
       "speakerMatch": "cluster",
       "speakerConfidence": 0.91,
       "speakerPurity": 0.86,
-      "mixedSpeaker": false
+      "mixedSpeaker": false,
+      "speakerSpans": [
+        { "start": 0.0, "end": 2.0, "speaker": "cluster_0", "confidence": 0.91 }
+      ]
     }
   ],
   "clusters": [
@@ -120,12 +125,25 @@ VAD 只表示“有人声”，不承担换人判断。第一版使用可解释�
       "clusterId": "cluster_0",
       "prototype": [0.0],
       "voicedSeconds": 42.3,
-      "windowCount": 31
+      "windowCount": 31,
+      "stability": "stable"
     }
   ],
   "metrics": {
     "windowCount": 120,
+    "validWindowCount": 120,
+    "noiseWindowCount": 0,
     "clusterCount": 3,
+    "postThresholdClusterCount": 3,
+    "speakerCountExceeded": false,
+    "forcedMergeCount": 0,
+    "transientClusterCount": 0,
+    "rawTransientSpanCount": 0,
+    "microNoiseSpanCount": 0,
+    "bridgedTransientSpanCount": 0,
+    "suppressedTransientSpanCount": 0,
+    "rawMixedSegmentCount": 0,
+    "presentationMixedSegmentCount": 0,
     "batchCount": 2
   }
 }
@@ -141,7 +159,7 @@ VAD 只表示“有人声”，不承担换人判断。第一版使用可解释�
 - 普通电脑默认 CPU 路径，平台专用执行提供器必须通过准确率与内存回归后才能启用；
 - native adapter 在任务结束后立即关闭；只有队列中紧接着还有 speaker 任务时才允许短暂复用。
 
-ASR 当前只有片段级文字，没有 token 时间戳。如果一个 ASR 片段跨越多位说话人，`v0.4` 必须设置 `mixedSpeaker` 或使用占比最高者，不能伪装成精确归属。后续可选择按 speaker turn 二次规划 ASR 片段或增加 token timestamp。
+ASR 当前只有片段级文字，没有 token 时间戳。如果一个 ASR 片段跨越多位说话人，`speaker-v4` 必须保留 `speakerSpans`、设置 `mixedSpeaker`，并仅把 `dominantSpeaker` 作为诊断字段，不能伪装成单一说话人归属，也不拆分文字内容。timeline 的 presentation 平滑不改变 cluster 数或 prototype：`<0.40s` 的 transient 输出为 unknown/noise，`stable_A → transient → stable_A` 在规则范围内桥接回 A，无法桥接的 transient 不形成可信 speaker；两个及以上 stable speaker 仍输出 mixed。mixed/transient 不参与声纹匹配或学习，mixed 也不输出 `speakerCluster` 或 `personId`。
 
 ## 7. 说话人档案与无感学习
 
