@@ -76,7 +76,7 @@ node tools/create-model-manifest.mjs \
 如果使用 GitHub 镜像，将带 `models-` 前缀的模型资产和 `model-manifest.json` 一起上传到对应 GitHub Release；也可以直接使用仓库内的默认清单：
 
 ```text
-ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.4.0-rc.1/model-manifest.json
+ZCODE_VOICE_MODEL_MANIFEST_URL=https://github.com/0xHyde/ZCodePlugins/releases/download/v0.4.0-rc.2/model-manifest.json
 ```
 
 默认清单已经接入 FunAudioLLM 官方来源；三个模型均标记为 Apache-2.0。下载时仍会校验 SHA256 和文件大小，项目只发布清单，不重新托管模型权重。SenseVoice、FSMN-VAD 和 CAM++ 的来源记录在仓库根目录 [`model-manifest.json`](../../model-manifest.json)。

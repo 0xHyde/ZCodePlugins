@@ -2,7 +2,7 @@
 
 ZCode 的全本地录音转写 MCP 插件，面向会议、访谈和调研场景。
 
-当前发布候选版本：`v0.4.0-rc.1`。
+当前发布候选版本：`v0.4.0-rc.2`。
 
 ## 使用体验
 
@@ -47,7 +47,7 @@ ZCODE_VOICE_THREADS=4
 发布版模型 manifest：
 
 ```text
-https://github.com/0xHyde/ZCodePlugins/releases/download/v0.4.0-rc.1/model-manifest.json
+https://github.com/0xHyde/ZCodePlugins/releases/download/v0.4.0-rc.2/model-manifest.json
 ```
 
 MCP 采用异步任务接口：`start_transcription` 创建任务，`wait_transcription` 在一次有限等待内返回完成结果或当前进度，`read_transcript` 分页读取全文；`get_transcription_status` 继续用于兼容和即时查询。任务完成后，状态中的 `artifacts.text` 返回完整纯文本文件，`artifacts.json` 和 `artifacts.markdown` 返回结构化及 Markdown 文件。

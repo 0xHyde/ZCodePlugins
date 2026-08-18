@@ -37,13 +37,13 @@ FFMPEG_LICENSE.txt
 6. 解压最终 ZIP，按本次 runtime manifest 逐文件核对 SHA，并检查入口、`node_modules` 和模型权重；
 7. 发布 GitHub Release，并从公开 URL 回读 model manifest 和插件包。
 
-带连字符的语义化版本 tag（例如 `v0.4.0-rc.1`）按 prerelease 发布，并明确不设为 latest；稳定版本 tag 按普通 Release 发布。工作流要求 tag、package、插件 manifest 和 Marketplace 四处版本完全一致。
+带连字符的语义化版本 tag（例如 `v0.4.0-rc.2`）按 prerelease 发布，并明确不设为 latest；稳定版本 tag 按普通 Release 发布。工作流要求 tag、package、插件 manifest 和 Marketplace 四处版本完全一致。
 
 macOS ARM 使用 native 优化构建；Windows 使用可移植 CPU 构建，避免把 GitHub runner 的指令集要求带到用户电脑。
 
 稳定版发布前还必须在最终 ZIP 上分别完成 macOS ARM64 与真实 Windows x64 的模型推理 smoke test。当前 CI 的协议测试只能证明程序和动态库能够启动，不能替代 Windows 真实录音的准确率、峰值内存与长录音验证。
 
-`v0.4.0-rc.1` 候选的源码、Windows x64 和 macOS ARM64 runtime 已由对应源码提交的 GitHub Actions 构建、验证并同步回仓库；本次 Release 仍按 prerelease 发布，不设为 latest。真实 Windows 模型推理、中文路径和曾触发 GGML 内存崩溃的长录音验证仍是稳定版门槛。Apache-2.0 项目的版权主体为 0xHyde。
+`v0.4.0-rc.2` 候选的源码、Windows x64 和 macOS ARM64 runtime 已由对应源码提交的 GitHub Actions 构建、验证并同步回仓库；本次 Release 仍按 prerelease 发布，不设为 latest。真实 Windows 模型推理、中文路径和曾触发 GGML 内存崩溃的长录音验证仍是稳定版门槛。Apache-2.0 项目的版权主体为 0xHyde。
 
 ## 发布边界
 
