@@ -19,7 +19,7 @@ input.on("line", (line) => {
   let result;
   if (request.method === "diarize") {
     result = {
-      algorithmVersion: "speaker-v4",
+      algorithmVersion: "speaker-v5",
       segments: (request.params.segments || []).map((segment) => {
         const start = Number.isFinite(segment.start) ? segment.start : 0;
         const end = Number.isFinite(segment.end) && segment.end > start ? segment.end : start + 2;
@@ -39,15 +39,25 @@ input.on("line", (line) => {
           speakerWindowCount: 2,
         };
       }),
-      clusters: [{ clusterId: 0, size: 2, windowCount: 2, stability: "stable", canonicalKey: "seg_0001:w0", prototype: embedding }],
+      clusters: [{ clusterId: 0, size: 8, windowCount: 8, voicedSeconds: 8, independentEvidence: 5, coherence: 0.9, stability: "stable", trusted: true, strong: true, canonicalKey: "seg_0001:w0", prototype: embedding }],
+      quality: {
+        state: "reliable",
+        trustedSpeakerCount: 1,
+        trustedCoverage: 1,
+        unknownRatio: 0,
+        mixedRatio: 0,
+        reasonCodes: [],
+      },
       metrics: {
-        windowCount: 2,
-        validWindowCount: 2,
+        windowCount: 8,
+        validWindowCount: 8,
         noiseWindowCount: 0,
         clusterCount: 1,
         postThresholdClusterCount: 1,
         speakerCountExceeded: false,
         forcedMergeCount: 0,
+        privateCandidateCount: 1,
+        trustedSpeakerCount: 1,
         transientClusterCount: 0,
         rawTransientSpanCount: 0,
         microNoiseSpanCount: 0,

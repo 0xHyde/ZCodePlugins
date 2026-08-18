@@ -45,6 +45,11 @@ for (const [platformKey, platform] of Object.entries(manifest.platforms || {})) 
     if (await sha256(file) !== entry.sha256.toLowerCase()) {
       throw new Error(`最终插件 runtime SHA 不匹配：${platformKey}/${entry.name}`);
     }
+    if (platformKey.startsWith("darwin-") && /^(?:ffmpeg|llama-funasr-sensevoice|campp-adapter)$/.test(entry.name)) {
+      if ((stat.mode & 0o111) === 0) {
+        throw new Error(`最终插件 macOS runtime 不可执行：${platformKey}/${entry.name}`);
+      }
+    }
   }
   const actualNames = (await fs.readdir(directory, { withFileTypes: true }))
     .filter((entry) => entry.isFile())

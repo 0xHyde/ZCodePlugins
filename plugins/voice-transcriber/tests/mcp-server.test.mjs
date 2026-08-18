@@ -199,7 +199,7 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
     const secondTranscript = await server.call("read_transcript", { taskId: second.taskId, includeText: true });
     assert.equal(secondTranscript.segments[0].speaker, "张老师");
     assert.equal(secondTranscript.segments[0].speakerCluster, "cluster_0");
-    assert.equal(secondTranscript.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(secondTranscript.speakerAnalysis.algorithmVersion, "speaker-v5");
     assert.doesNotMatch(JSON.stringify(secondTranscript), /prototype|embedding|\[1,0,0,0\]/i);
     let calls = [];
     for (let index = 0; index < 20; index += 1) {
@@ -213,7 +213,7 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
   }
 });
 
-test("speaker-v4 preserves mixed timeline spans and excludes mixed samples from matching and learning", async () => {
+test("speaker-v5 preserves mixed timeline spans and excludes mixed samples from matching and learning", async () => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-mixed-v4-"));
   const audioPath = path.join(dataRoot, "mixed.wav");
   const modelPath = path.join(dataRoot, "campp.onnx");
@@ -251,7 +251,9 @@ test("speaker-v4 preserves mixed timeline spans and excludes mixed samples from 
     assert.equal(segment.speakerSpans.length, 2);
     assert.equal(segment.speakerSpans[0].speaker, "cluster_0");
     assert.equal(segment.speakerSpans[1].speaker, "cluster_1");
-    assert.equal(transcript.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(transcript.speakerAnalysis.algorithmVersion, "speaker-v5");
+    assert.equal(transcript.speakerAnalysis.quality.state, "reliable");
+    assert.equal(transcript.speakerAnalysis.quality.trustedSpeakerCount, 2);
     assert.equal(transcript.speakerAnalysis.metrics.forcedMergeCount, 0);
     assert.equal(transcript.speakerAnalysis.metrics.rawMixedSegmentCount, 1);
     assert.equal(transcript.speakerAnalysis.metrics.presentationMixedSegmentCount, 1);
@@ -280,7 +282,7 @@ test("speaker-v4 preserves mixed timeline spans and excludes mixed samples from 
   }
 });
 
-test("speaker-v4 keeps unbridged transient evidence public as unknown and blocks profile learning", async () => {
+test("speaker-v5 keeps unbridged transient evidence public as unknown and blocks profile learning", async () => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-transient-v4-"));
   const audioPath = path.join(dataRoot, "transient.wav");
   const modelPath = path.join(dataRoot, "campp.onnx");
@@ -314,7 +316,9 @@ test("speaker-v4 keeps unbridged transient evidence public as unknown and blocks
     assert.equal("speakerCluster" in segment, false);
     assert.equal("personId" in segment, false);
     assert.deepEqual(segment.speakerSpans.map((span) => span.speaker), ["unknown"]);
-    assert.equal(transcript.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(transcript.speakerAnalysis.algorithmVersion, "speaker-v5");
+    assert.ok(["degraded", "unusable"].includes(transcript.speakerAnalysis.quality.state));
+    assert.equal(transcript.speakerAnalysis.quality.trustedSpeakerCount, 0);
     assert.equal(transcript.speakerAnalysis.metrics.rawTransientSpanCount, 1);
     assert.equal(transcript.speakerAnalysis.metrics.suppressedTransientSpanCount, 1);
 
@@ -331,7 +335,7 @@ test("speaker-v4 keeps unbridged transient evidence public as unknown and blocks
     const cached = await server.call("start_transcription", { audioPath });
     assert.equal(cached.cacheHit, true);
     const cachedTranscript = await server.call("read_transcript", { taskId: cached.taskId });
-    assert.equal(cachedTranscript.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(cachedTranscript.speakerAnalysis.algorithmVersion, "speaker-v5");
     assert.equal(cachedTranscript.segments[0].speakerSpans[0].speaker, "unknown");
   } finally {
     await server.close();
@@ -356,8 +360,8 @@ test("speaker v4 correction expands to clean segments in the same cluster", asyn
       { id: "seg_0003", start: 4, end: 6, text: "丙", speaker: "cluster_0", speakerCluster: "cluster_0", speakerPurity: 0.55, mixedSpeaker: true },
     ],
     _speakerAnalysis: {
-      algorithmVersion: "speaker-v4",
-      clusters: [{ clusterId: "cluster_0", size: 3, stability: "stable", prototype: [1, 0, 0, 0] }],
+      algorithmVersion: "speaker-v5",
+      clusters: [{ clusterId: "cluster_0", size: 8, windowCount: 8, voicedSeconds: 8, independentEvidence: 5, stability: "stable", trusted: true, prototype: [1, 0, 0, 0] }],
     },
   }));
   try {
@@ -391,8 +395,8 @@ test("rolling back one learning event preserves later confirmed samples", async 
       revision: 1,
       segments: [{ id: "seg_0001", start: 0, end: 2, text: suffix, speaker: "cluster_0", speakerCluster: "cluster_0", speakerPurity: 0.95, mixedSpeaker: false }],
       _speakerAnalysis: {
-        algorithmVersion: "speaker-v4",
-        clusters: [{ clusterId: "cluster_0", size: 2, windowCount: 2, stability: "stable", prototype }],
+        algorithmVersion: "speaker-v5",
+        clusters: [{ clusterId: "cluster_0", size: 8, windowCount: 8, voicedSeconds: 8, independentEvidence: 5, stability: "stable", trusted: true, prototype }],
       },
     }));
     return taskId;
@@ -805,7 +809,7 @@ test("task cache identity is explicitly versioned and separates ASR, speaker, an
   }
 });
 
-test("speaker-v3 stage cache is ignored after the speaker-v4 semantic change", async () => {
+test("speaker-v4 stage cache is ignored after the speaker-v5 semantic change", async () => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-v2-cache-"));
   const audioPath = path.join(dataRoot, "old-cache.wav");
   const modelPath = path.join(dataRoot, "campp.onnx");
@@ -826,7 +830,7 @@ test("speaker-v3 stage cache is ignored after the speaker-v4 semantic change", a
     const firstTask = JSON.parse(await fs.readFile(path.join(dataRoot, "tasks", `${first.taskId}.json`), "utf8"));
     const stageFile = path.join(dataRoot, "cache", "speaker", `${firstTask.cache.speaker.key}.json`);
     const oldStage = JSON.parse(await fs.readFile(stageFile, "utf8"));
-    oldStage.result.privateAnalysis.algorithmVersion = "speaker-v3";
+    oldStage.result.privateAnalysis.algorithmVersion = "speaker-v4";
     await fs.writeFile(stageFile, JSON.stringify(oldStage));
 
     const second = await server.call("start_transcription", { audioPath, outputFormat: "json" });
@@ -834,7 +838,7 @@ test("speaker-v3 stage cache is ignored after the speaker-v4 semantic change", a
     assert.equal((await waitFor(server, second.taskId)).status, "completed");
     const secondTask = JSON.parse(await fs.readFile(path.join(dataRoot, "tasks", `${second.taskId}.json`), "utf8"));
     assert.equal(secondTask.cache.speaker.hit, false);
-    assert.equal(secondTask.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(secondTask.speakerAnalysis.algorithmVersion, "speaker-v5");
   } finally {
     await server.close();
     await fs.rm(dataRoot, { recursive: true, force: true });
@@ -1038,7 +1042,7 @@ test("restart marks work interrupted and reuses its completed ASR checkpoint", a
     '  const request = JSON.parse(line);',
     '  if (!fs.existsSync(releaseFile)) return;',
     '  const segment = request.params.segments[0];',
-    '  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { algorithmVersion: "speaker-v4", segments: [{ ...segment, speaker: "cluster_0", speakerCluster: "cluster_0", dominantSpeaker: "cluster_0", speakerMatch: "cluster", speakerPurity: 0.9, mixedSpeaker: false, speakerSpans: [{ start: segment.start || 0, end: segment.end || 1, speaker: "cluster_0", confidence: 0.9 }] }], clusters: [{ clusterId: "cluster_0", prototype: [1, 0, 0, 0], windowCount: 2, stability: "stable" }], metrics: { clusterCount: 1, forcedMergeCount: 0 } } })}\\n`);',
+    '  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { algorithmVersion: "speaker-v5", segments: [{ ...segment, speaker: "cluster_0", speakerCluster: "cluster_0", dominantSpeaker: "cluster_0", speakerMatch: "cluster", speakerPurity: 0.9, mixedSpeaker: false, speakerSpans: [{ start: segment.start || 0, end: segment.end || 1, speaker: "cluster_0", confidence: 0.9 }] }], clusters: [{ clusterId: "cluster_0", prototype: [1, 0, 0, 0], windowCount: 8, voicedSeconds: 8, independentEvidence: 5, stability: "stable", trusted: true }], metrics: { clusterCount: 1, forcedMergeCount: 0, trustedSpeakerCount: 1 }, quality: { state: "reliable", trustedSpeakerCount: 1, trustedCoverage: 1, unknownRatio: 0, mixedRatio: 0, reasonCodes: [] } } })}\\n`);',
     '});',
   ].join("\n"));
   const env = {
@@ -1179,12 +1183,15 @@ test("simultaneous ZCode sessions preserve independent speaker corrections and l
         mixedSpeaker: false,
       }],
       _speakerAnalysis: {
-        algorithmVersion: "speaker-v4",
+        algorithmVersion: "speaker-v5",
         clusters: [{
           clusterId: "cluster_0",
           prototype: index === 0 ? [1, 0, 0, 0] : [0.99, 0.01, 0, 0],
-          windowCount: 2,
+          windowCount: 8,
+          voicedSeconds: 8,
+          independentEvidence: 5,
           stability: "stable",
+          trusted: true,
         }],
       },
       corrections: [],

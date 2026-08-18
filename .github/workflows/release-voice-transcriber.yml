@@ -306,6 +306,8 @@ jobs:
           test -f "$unpacked/voice-transcriber/LICENSE"
           test -f "$unpacked/voice-transcriber/THIRD_PARTY_NOTICES.md"
           test -x "$unpacked/voice-transcriber/bin/darwin/arm64/campp-adapter"
+          test -x "$unpacked/voice-transcriber/bin/darwin/arm64/ffmpeg"
+          test -x "$unpacked/voice-transcriber/bin/darwin/arm64/llama-funasr-sensevoice"
           test -f "$unpacked/voice-transcriber/bin/win32/x64/campp-adapter.exe"
           node --check "$unpacked/voice-transcriber/dist/mcp/server.js"
           node tools/verify-runtime-tree.mjs \

@@ -18,19 +18,30 @@ struct EmbeddingPoint {
 };
 
 struct ClusterOptions {
-    // Average-link cosine similarity required for an ordinary merge.
-    // With 1.5s/0.75s windows this is the calibrated baseline for the
-    // bundled CAM++ checkpoint. It is intentionally different from the old
-    // segment-level greedy threshold because the evidence unit changed.
+    // Compatibility alias used by older callers.  speaker-v5 ignores this as
+    // the sole merge rule and instead uses the two-stage thresholds below.
     double cluster_threshold = 0.45;
-    // Valid clusters smaller than this remain transient instead of being
-    // attached to another speaker.
+    double micro_threshold = 0.72;
+    double consolidate_threshold = 0.38;
+    double consolidate_floor = 0.22;
+    double consolidate_percentile = 0.20;
+    double consolidate_margin = 0.035;
+    double established_merge_threshold = 0.58;
+    std::size_t local_neighbor_count = 48;
+    double local_time_window_seconds = 12.0;
+    std::size_t consolidate_knn = 16;
+    std::size_t consolidate_max_anchors = 64;
+    std::size_t merge_sample_size = 24;
+    std::size_t min_independent_evidence = 3;
+    double min_union_voiced_seconds = 2.5;
+    double min_trusted_union_seconds = 3.0;
+    double min_coherence = 0.48;
+    std::size_t strong_independent_evidence = 6;
+    double strong_union_voiced_seconds = 6.0;
+    // Kept as a compatibility floor; size alone no longer makes a speaker public.
     std::size_t min_cluster_size = 2;
-    // AHC never merges below this many evidence-backed clusters.  It does not
-    // invent speakers when the embeddings contain fewer distinct groups.
     std::size_t min_speakers = 1;
-    // Compatibility guardrail only.  It never forces a merge or changes
-    // threshold-backed labels.
+    // Warning / publication ceiling only.  Never forces a merge.
     std::size_t max_speakers = 64;
 };
 
@@ -40,6 +51,20 @@ struct ClusterSummary {
     std::string canonical_key;
     std::vector<float> prototype;
     std::string stability = "stable";
+    double union_voiced_seconds = 0.0;
+    std::size_t independent_evidence = 0;
+    double coherence = 0.0;
+    bool trusted = false;
+    bool strong = false;
+};
+
+struct QualitySummary {
+    std::string state = "reliable";
+    std::size_t trusted_speaker_count = 0;
+    double trusted_coverage = 0.0;
+    double unknown_ratio = 0.0;
+    double mixed_ratio = 0.0;
+    std::vector<std::string> reason_codes;
 };
 
 struct ClusterResult {
@@ -51,12 +76,19 @@ struct ClusterResult {
     // Stable IDs are assigned by canonical_key, not by input order.
     std::vector<ClusterSummary> clusters;
     // Private diagnostics for the speaker pipeline.  max_speakers is a
-    // warning ceiling; forced_merge_count is intentionally always zero.
+    // warning / publication ceiling; forced_merge_count is always zero.
     std::size_t post_threshold_cluster_count = 0;
     bool speaker_count_exceeded = false;
     std::size_t forced_merge_count = 0;
     std::size_t noise_window_count = 0;
     std::size_t transient_cluster_count = 0;
+    std::size_t private_candidate_count = 0;
+    std::size_t trusted_speaker_count = 0;
+    // Undirected prototype-candidate edges used during consolidation.
+    // Bounded by O(micro_clusters * (knn + anchors)), never a full matrix.
+    std::size_t micro_cluster_count = 0;
+    std::size_t consolidation_candidate_count = 0;
+    QualitySummary quality;
 };
 
 struct TimelineWindow {
@@ -90,6 +122,8 @@ struct TimelineOptions {
     double transient_bridge_max_seconds = 1.50;
     // Cross-segment context must be this close on each side of the island.
     double bridge_max_gap_seconds = 0.50;
+    // Isolated speech shorter than this cannot create a public identity.
+    double short_isolation_seconds = 1.0;
 };
 
 struct TimelineMetrics {
@@ -106,10 +140,9 @@ struct TimelineResult {
     TimelineMetrics metrics;
 };
 
-// Deterministic, global average-link agglomerative clustering over cosine
-// similarity.  The result is invariant to input permutation when point keys
-// are stable.  No numerical dependency or audio/runtime type leaks through
-// this interface.
+// Deterministic two-stage clustering: time-local micro-clusters followed by
+// robust prototype consolidation.  The result is invariant to input
+// permutation when point keys are stable.
 ClusterResult cluster_embeddings(const std::vector<EmbeddingPoint> &points,
                                  const ClusterOptions &options = {});
 
@@ -120,5 +153,9 @@ TimelineResult assign_speaker_timeline(const std::vector<TimelineWindow> &window
                                        const ClusterResult &clustering,
                                        std::size_t segment_count,
                                        const TimelineOptions &options = {});
+
+QualitySummary evaluate_speaker_quality(const ClusterResult &clustering,
+                                        const TimelineResult &timeline,
+                                        const ClusterOptions &options = {});
 
 } // namespace zcode::speaker

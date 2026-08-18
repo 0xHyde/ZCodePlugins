@@ -483,6 +483,12 @@ std::size_t size_option(const json &params, const char *key, const char *environ
 zcode::speaker::ClusterOptions cluster_options(const json &params) {
     zcode::speaker::ClusterOptions options;
     options.cluster_threshold = real_option(params, "clusterThreshold", "ZCODE_CAMPP_CLUSTER_THRESHOLD", 0.45);
+    options.micro_threshold = real_option(params, "microThreshold", "ZCODE_CAMPP_MICRO_THRESHOLD", 0.72);
+    options.consolidate_threshold = real_option(params, "consolidateThreshold", "ZCODE_CAMPP_CONSOLIDATE_THRESHOLD", 0.38);
+    options.consolidate_floor = real_option(params, "consolidateFloor", "ZCODE_CAMPP_CONSOLIDATE_FLOOR", 0.22);
+    options.consolidate_margin = real_option(params, "consolidateMargin", "ZCODE_CAMPP_CONSOLIDATE_MARGIN", 0.035);
+    options.established_merge_threshold = real_option(
+        params, "establishedMergeThreshold", "ZCODE_CAMPP_ESTABLISHED_MERGE_THRESHOLD", 0.58);
     options.min_cluster_size = size_option(params, "minClusterSize", "ZCODE_CAMPP_MIN_CLUSTER_SIZE", 2);
     options.min_speakers = size_option(params, "minSpeakers", "ZCODE_CAMPP_MIN_SPEAKERS", 1);
     options.max_speakers = size_option(params, "maxSpeakers", "ZCODE_CAMPP_MAX_SPEAKERS", 64);
@@ -618,8 +624,9 @@ json handle(const json &request, CamppEngine &engine) {
 
         const auto timeline_result = zcode::speaker::assign_speaker_timeline(
             timeline, clustering, input_segments.is_array() ? input_segments.size() : 0, timeline_options(params));
+        const auto quality = zcode::speaker::evaluate_speaker_quality(clustering, timeline_result, cluster_options(params));
         const auto &assignments = timeline_result.assignments;
-        json response{{"segments", json::array()}, {"algorithmVersion", "speaker-v4"}};
+        json response{{"segments", json::array()}, {"algorithmVersion", "speaker-v5"}};
         response["metrics"] = {
             {"windowCount", windows.size()},
             {"validWindowCount", windows.size() - clustering.noise_window_count},
@@ -629,6 +636,8 @@ json handle(const json &request, CamppEngine &engine) {
             {"speakerCountExceeded", clustering.speaker_count_exceeded},
             {"forcedMergeCount", clustering.forced_merge_count},
             {"transientClusterCount", clustering.transient_cluster_count},
+            {"privateCandidateCount", clustering.private_candidate_count},
+            {"trustedSpeakerCount", clustering.trusted_speaker_count},
             {"rawTransientSpanCount", timeline_result.metrics.raw_transient_span_count},
             {"microNoiseSpanCount", timeline_result.metrics.micro_noise_span_count},
             {"bridgedTransientSpanCount", timeline_result.metrics.bridged_transient_span_count},
@@ -637,14 +646,28 @@ json handle(const json &request, CamppEngine &engine) {
             {"presentationMixedSegmentCount", timeline_result.metrics.presentation_mixed_segment_count},
             {"batchCount", run.batch_count},
         };
+        response["quality"] = {
+            {"state", quality.state},
+            {"trustedSpeakerCount", quality.trusted_speaker_count},
+            {"trustedCoverage", quality.trusted_coverage},
+            {"unknownRatio", quality.unknown_ratio},
+            {"mixedRatio", quality.mixed_ratio},
+            {"reasonCodes", quality.reason_codes},
+        };
         response["clusters"] = json::array();
         for (const auto &summary : clustering.clusters) {
             response["clusters"].push_back({
                 {"clusterId", summary.id},
                 {"size", summary.size},
+                {"windowCount", summary.size},
+                {"voicedSeconds", summary.union_voiced_seconds},
+                {"independentEvidence", summary.independent_evidence},
+                {"coherence", summary.coherence},
                 {"canonicalKey", summary.canonical_key},
                 {"prototype", summary.prototype},
                 {"stability", summary.stability},
+                {"trusted", summary.trusted},
+                {"strong", summary.strong},
             });
         }
 
