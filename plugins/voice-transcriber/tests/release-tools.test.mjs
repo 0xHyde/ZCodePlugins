@@ -47,11 +47,14 @@ test("release runtime verifier accepts exact files and rejects stale packaged bi
     },
   }));
   try {
-    await fs.chmod(runtime, 0o644);
-    const notExecutable = spawnSync(process.execPath, [verifier, "--root", path.join(directory, "bin"), "--manifest", manifestFile], { encoding: "utf8" });
-    assert.notEqual(notExecutable.status, 0);
-    assert.match(notExecutable.stderr, /不可执行/);
-    await fs.chmod(runtime, 0o755);
+    const canInspectPosixModes = process.platform !== "win32";
+    if (canInspectPosixModes) {
+      await fs.chmod(runtime, 0o644);
+      const notExecutable = spawnSync(process.execPath, [verifier, "--root", path.join(directory, "bin"), "--manifest", manifestFile], { encoding: "utf8" });
+      assert.notEqual(notExecutable.status, 0);
+      assert.match(notExecutable.stderr, /不可执行/);
+      await fs.chmod(runtime, 0o755);
+    }
     const valid = spawnSync(process.execPath, [verifier, "--root", path.join(directory, "bin"), "--manifest", manifestFile], { encoding: "utf8" });
     assert.equal(valid.status, 0, valid.stderr);
     const extra = path.join(runtimeDir, "old-runtime");
@@ -117,27 +120,31 @@ test("packaged macOS runtime executable bits survive a zip round-trip", async ()
       manifestFile,
     ], { encoding: "utf8" });
     assert.equal(verified.status, 0, verified.stderr);
-    for (const name of ["ffmpeg", "llama-funasr-sensevoice", "campp-adapter"]) {
-      const stat = await fs.stat(path.join(unpacked, "voice-transcriber", "bin", "darwin", "arm64", name));
-      assert.notEqual(stat.mode & 0o111, 0, `${name} lost executable bits in the package zip`);
+    if (process.platform !== "win32") {
+      for (const name of ["ffmpeg", "llama-funasr-sensevoice", "campp-adapter"]) {
+        const stat = await fs.stat(path.join(unpacked, "voice-transcriber", "bin", "darwin", "arm64", name));
+        assert.notEqual(stat.mode & 0o111, 0, `${name} lost executable bits in the package zip`);
+      }
     }
 
-    await fs.chmod(path.join(runtimeDir, "ffmpeg"), 0o644);
-    const brokenZip = path.join(directory, "voice-transcriber-plugin-broken.zip");
-    const packedBroken = spawnSync("zip", ["-q", "-r", brokenZip, "voice-transcriber"], { cwd: directory, encoding: "utf8" });
-    assert.equal(packedBroken.status, 0, packedBroken.stderr);
-    const unpackedBroken = path.join(directory, "unpacked-broken");
-    await fs.mkdir(unpackedBroken);
-    spawnSync("unzip", ["-q", brokenZip, "-d", unpackedBroken], { encoding: "utf8" });
-    const rejected = spawnSync(process.execPath, [
-      verifier,
-      "--root",
-      path.join(unpackedBroken, "voice-transcriber", "bin"),
-      "--manifest",
-      manifestFile,
-    ], { encoding: "utf8" });
-    assert.notEqual(rejected.status, 0);
-    assert.match(rejected.stderr, /不可执行/);
+    if (process.platform !== "win32") {
+      await fs.chmod(path.join(runtimeDir, "ffmpeg"), 0o644);
+      const brokenZip = path.join(directory, "voice-transcriber-plugin-broken.zip");
+      const packedBroken = spawnSync("zip", ["-q", "-r", brokenZip, "voice-transcriber"], { cwd: directory, encoding: "utf8" });
+      assert.equal(packedBroken.status, 0, packedBroken.stderr);
+      const unpackedBroken = path.join(directory, "unpacked-broken");
+      await fs.mkdir(unpackedBroken);
+      spawnSync("unzip", ["-q", brokenZip, "-d", unpackedBroken], { encoding: "utf8" });
+      const rejected = spawnSync(process.execPath, [
+        verifier,
+        "--root",
+        path.join(unpackedBroken, "voice-transcriber", "bin"),
+        "--manifest",
+        manifestFile,
+      ], { encoding: "utf8" });
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stderr, /不可执行/);
+    }
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
