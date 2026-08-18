@@ -22,7 +22,7 @@ https://github.com/0xHyde/ZCodePlugins
 2. 校验文件大小和 SHA256 后保存到 ZCode 插件数据目录；
 3. 后续离线复用，不重复下载。
 
-当前发布候选版本：v0.4.0-rc.1
+当前发布候选版本：v0.4.0-rc.2
 
 ## voice-transcriber
 

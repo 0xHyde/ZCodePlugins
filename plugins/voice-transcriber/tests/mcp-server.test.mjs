@@ -199,7 +199,7 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
     const secondTranscript = await server.call("read_transcript", { taskId: second.taskId, includeText: true });
     assert.equal(secondTranscript.segments[0].speaker, "张老师");
     assert.equal(secondTranscript.segments[0].speakerCluster, "cluster_0");
-    assert.equal(secondTranscript.speakerAnalysis.algorithmVersion, "speaker-v2");
+    assert.equal(secondTranscript.speakerAnalysis.algorithmVersion, "speaker-v4");
     assert.doesNotMatch(JSON.stringify(secondTranscript), /prototype|embedding|\[1,0,0,0\]/i);
     let calls = [];
     for (let index = 0; index < 20; index += 1) {
@@ -213,7 +213,133 @@ test("corrected meeting segments enroll and auto-match on a later recording", as
   }
 });
 
-test("speaker v2 correction expands to clean segments in the same cluster", async () => {
+test("speaker-v4 preserves mixed timeline spans and excludes mixed samples from matching and learning", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-mixed-v4-"));
+  const audioPath = path.join(dataRoot, "mixed.wav");
+  const modelPath = path.join(dataRoot, "campp.onnx");
+  const adapter = fileURLToPath(new URL("mock-campp-adapter-v4-mixed.mjs", import.meta.url));
+  await fs.writeFile(audioPath, "mixed audio");
+  await fs.writeFile(modelPath, "mock model");
+  await fs.writeFile(path.join(dataRoot, "profiles.json"), JSON.stringify({
+    version: 2,
+    profiles: [{
+      personId: "person_existing",
+      name: "已有档案",
+      prototype: [1, 0, 0, 0],
+      confirmedSamples: [],
+      candidateSamples: [],
+    }],
+  }));
+  const server = startServer({
+    ZCODE_VOICE_DATA_DIR: dataRoot,
+    ZCODE_CAMPP_COMMAND: process.execPath,
+    ZCODE_CAMPP_ARGS: JSON.stringify([adapter]),
+    ZCODE_CAMPP_MODEL: modelPath,
+  }, { keepData: true });
+  try {
+    await server.initialize();
+    const started = await server.call("start_transcription", { audioPath });
+    assert.equal((await waitFor(server, started.taskId)).status, "completed");
+    const transcript = await server.call("read_transcript", { taskId: started.taskId, includeText: true });
+    const segment = transcript.segments[0];
+    assert.equal(segment.speaker, "mixed");
+    assert.equal(segment.dominantSpeaker, "cluster_0");
+    assert.equal(segment.speakerMatch, "mixed");
+    assert.equal(segment.mixedSpeaker, true);
+    assert.equal("speakerCluster" in segment, false);
+    assert.equal("personId" in segment, false);
+    assert.equal(segment.speakerSpans.length, 2);
+    assert.equal(segment.speakerSpans[0].speaker, "cluster_0");
+    assert.equal(segment.speakerSpans[1].speaker, "cluster_1");
+    assert.equal(transcript.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(transcript.speakerAnalysis.metrics.forcedMergeCount, 0);
+    assert.equal(transcript.speakerAnalysis.metrics.rawMixedSegmentCount, 1);
+    assert.equal(transcript.speakerAnalysis.metrics.presentationMixedSegmentCount, 1);
+    assert.doesNotMatch(JSON.stringify(transcript), /prototype|embedding|\[1,0,0,0\]/i);
+
+    const corrected = await server.call("correct_speaker", {
+      taskId: started.taskId,
+      segmentIds: [segment.id],
+      personName: "不应学习",
+    });
+    assert.equal(corrected.learning.applied, false);
+    const profiles = await server.call("list_speakers");
+    assert.deepEqual(profiles.profiles.map((profile) => profile.personId), ["person_existing"]);
+    const afterCorrection = await server.call("read_transcript", { taskId: started.taskId });
+    assert.equal(afterCorrection.segments[0].speaker, "mixed");
+    assert.equal("personId" in afterCorrection.segments[0], false);
+    assert.equal("speakerCluster" in afterCorrection.segments[0], false);
+
+    const cached = await server.call("start_transcription", { audioPath });
+    assert.equal(cached.cacheHit, true);
+    const cachedTranscript = await server.call("read_transcript", { taskId: cached.taskId });
+    assert.equal(cachedTranscript.segments[0].speakerSpans.length, 2);
+  } finally {
+    await server.close();
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("speaker-v4 keeps unbridged transient evidence public as unknown and blocks profile learning", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-transient-v4-"));
+  const audioPath = path.join(dataRoot, "transient.wav");
+  const modelPath = path.join(dataRoot, "campp.onnx");
+  const adapter = fileURLToPath(new URL("mock-campp-adapter-v4-transient.mjs", import.meta.url));
+  await fs.writeFile(audioPath, "transient audio");
+  await fs.writeFile(modelPath, "mock model");
+  await fs.writeFile(path.join(dataRoot, "profiles.json"), JSON.stringify({
+    version: 2,
+    profiles: [{
+      personId: "person_existing",
+      name: "不应自动匹配",
+      prototype: [1, 0, 0, 0],
+      confirmedSamples: [],
+      candidateSamples: [],
+    }],
+  }));
+  const server = startServer({
+    ZCODE_VOICE_DATA_DIR: dataRoot,
+    ZCODE_CAMPP_COMMAND: process.execPath,
+    ZCODE_CAMPP_ARGS: JSON.stringify([adapter]),
+    ZCODE_CAMPP_MODEL: modelPath,
+  }, { keepData: true });
+  try {
+    await server.initialize();
+    const started = await server.call("start_transcription", { audioPath });
+    assert.equal((await waitFor(server, started.taskId)).status, "completed");
+    const transcript = await server.call("read_transcript", { taskId: started.taskId, includeText: true });
+    const segment = transcript.segments[0];
+    assert.equal(segment.speaker, "unknown");
+    assert.equal(segment.mixedSpeaker, false);
+    assert.equal("speakerCluster" in segment, false);
+    assert.equal("personId" in segment, false);
+    assert.deepEqual(segment.speakerSpans.map((span) => span.speaker), ["unknown"]);
+    assert.equal(transcript.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(transcript.speakerAnalysis.metrics.rawTransientSpanCount, 1);
+    assert.equal(transcript.speakerAnalysis.metrics.suppressedTransientSpanCount, 1);
+
+    const corrected = await server.call("correct_speaker", {
+      taskId: started.taskId,
+      segmentIds: [segment.id],
+      personName: "只修正文稿、不学习",
+    });
+    assert.equal(corrected.learning.applied, false);
+    assert.equal(corrected.learning.code, "insufficient_speaker_sample");
+    const profiles = await server.call("list_speakers");
+    assert.deepEqual(profiles.profiles.map((profile) => profile.personId), ["person_existing"]);
+
+    const cached = await server.call("start_transcription", { audioPath });
+    assert.equal(cached.cacheHit, true);
+    const cachedTranscript = await server.call("read_transcript", { taskId: cached.taskId });
+    assert.equal(cachedTranscript.speakerAnalysis.algorithmVersion, "speaker-v4");
+    assert.equal(cachedTranscript.segments[0].speakerSpans[0].speaker, "unknown");
+  } finally {
+    await server.close();
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("speaker v4 correction expands to clean segments in the same cluster", async () => {
   const server = startServer();
   const taskId = `task_${"c".repeat(20)}`;
   await fs.mkdir(path.join(server.dataRoot, "tasks"), { recursive: true });
@@ -230,8 +356,8 @@ test("speaker v2 correction expands to clean segments in the same cluster", asyn
       { id: "seg_0003", start: 4, end: 6, text: "丙", speaker: "cluster_0", speakerCluster: "cluster_0", speakerPurity: 0.55, mixedSpeaker: true },
     ],
     _speakerAnalysis: {
-      algorithmVersion: "speaker-v2",
-      clusters: [{ clusterId: "cluster_0", size: 3, prototype: [1, 0, 0, 0] }],
+      algorithmVersion: "speaker-v4",
+      clusters: [{ clusterId: "cluster_0", size: 3, stability: "stable", prototype: [1, 0, 0, 0] }],
     },
   }));
   try {
@@ -265,8 +391,8 @@ test("rolling back one learning event preserves later confirmed samples", async 
       revision: 1,
       segments: [{ id: "seg_0001", start: 0, end: 2, text: suffix, speaker: "cluster_0", speakerCluster: "cluster_0", speakerPurity: 0.95, mixedSpeaker: false }],
       _speakerAnalysis: {
-        algorithmVersion: "speaker-v2",
-        clusters: [{ clusterId: "cluster_0", size: 2, windowCount: 2, prototype }],
+        algorithmVersion: "speaker-v4",
+        clusters: [{ clusterId: "cluster_0", size: 2, windowCount: 2, stability: "stable", prototype }],
       },
     }));
     return taskId;
@@ -679,6 +805,42 @@ test("task cache identity is explicitly versioned and separates ASR, speaker, an
   }
 });
 
+test("speaker-v3 stage cache is ignored after the speaker-v4 semantic change", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-v2-cache-"));
+  const audioPath = path.join(dataRoot, "old-cache.wav");
+  const modelPath = path.join(dataRoot, "campp.onnx");
+  const adapter = fileURLToPath(new URL("mock-campp-adapter.mjs", import.meta.url));
+  await fs.writeFile(audioPath, "old cache audio");
+  await fs.writeFile(modelPath, "mock model");
+  const env = {
+    ZCODE_VOICE_DATA_DIR: dataRoot,
+    ZCODE_CAMPP_COMMAND: process.execPath,
+    ZCODE_CAMPP_ARGS: JSON.stringify([adapter]),
+    ZCODE_CAMPP_MODEL: modelPath,
+  };
+  const server = startServer(env);
+  try {
+    await server.initialize();
+    const first = await server.call("start_transcription", { audioPath, outputFormat: "markdown" });
+    assert.equal((await waitFor(server, first.taskId)).status, "completed");
+    const firstTask = JSON.parse(await fs.readFile(path.join(dataRoot, "tasks", `${first.taskId}.json`), "utf8"));
+    const stageFile = path.join(dataRoot, "cache", "speaker", `${firstTask.cache.speaker.key}.json`);
+    const oldStage = JSON.parse(await fs.readFile(stageFile, "utf8"));
+    oldStage.result.privateAnalysis.algorithmVersion = "speaker-v3";
+    await fs.writeFile(stageFile, JSON.stringify(oldStage));
+
+    const second = await server.call("start_transcription", { audioPath, outputFormat: "json" });
+    assert.notEqual(second.taskId, first.taskId);
+    assert.equal((await waitFor(server, second.taskId)).status, "completed");
+    const secondTask = JSON.parse(await fs.readFile(path.join(dataRoot, "tasks", `${second.taskId}.json`), "utf8"));
+    assert.equal(secondTask.cache.speaker.hit, false);
+    assert.equal(secondTask.speakerAnalysis.algorithmVersion, "speaker-v4");
+  } finally {
+    await server.close();
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
 test("stage caches follow dependency bytes instead of configured file locations", async () => {
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcriber-content-cache-"));
   const audioPath = path.join(dataRoot, "content-cache.wav");
@@ -876,7 +1038,7 @@ test("restart marks work interrupted and reuses its completed ASR checkpoint", a
     '  const request = JSON.parse(line);',
     '  if (!fs.existsSync(releaseFile)) return;',
     '  const segment = request.params.segments[0];',
-    '  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { algorithmVersion: "speaker-v2", segments: [{ ...segment, speaker: "cluster_0", speakerCluster: "cluster_0" }], clusters: [{ clusterId: "cluster_0", prototype: [1, 0, 0, 0], windowCount: 2 }], metrics: { clusterCount: 1 } } })}\\n`);',
+    '  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { algorithmVersion: "speaker-v4", segments: [{ ...segment, speaker: "cluster_0", speakerCluster: "cluster_0", dominantSpeaker: "cluster_0", speakerMatch: "cluster", speakerPurity: 0.9, mixedSpeaker: false, speakerSpans: [{ start: segment.start || 0, end: segment.end || 1, speaker: "cluster_0", confidence: 0.9 }] }], clusters: [{ clusterId: "cluster_0", prototype: [1, 0, 0, 0], windowCount: 2, stability: "stable" }], metrics: { clusterCount: 1, forcedMergeCount: 0 } } })}\\n`);',
     '});',
   ].join("\n"));
   const env = {
@@ -1017,11 +1179,12 @@ test("simultaneous ZCode sessions preserve independent speaker corrections and l
         mixedSpeaker: false,
       }],
       _speakerAnalysis: {
-        algorithmVersion: "speaker-v2",
+        algorithmVersion: "speaker-v4",
         clusters: [{
           clusterId: "cluster_0",
           prototype: index === 0 ? [1, 0, 0, 0] : [0.99, 0.01, 0, 0],
           windowCount: 2,
+          stability: "stable",
         }],
       },
       corrections: [],

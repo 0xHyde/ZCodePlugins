@@ -15,7 +15,6 @@ namespace zcode::speaker {
 namespace {
 
 constexpr double kMinimumCosine = -1.0;
-constexpr double kSmallClusterAttachSlack = 0.10;
 constexpr double kMixedSpeakerPurity = 0.80;
 
 struct WorkingCluster {
@@ -43,7 +42,7 @@ struct PairWorseFirst {
 };
 
 double safe_threshold(double value) {
-    if (!std::isfinite(value)) return 0.35;
+    if (!std::isfinite(value)) return 0.45;
     return std::max(-1.0, std::min(1.0, value));
 }
 
@@ -122,12 +121,11 @@ void push_candidate(std::priority_queue<PairCandidate, std::vector<PairCandidate
                     const std::vector<std::size_t> &versions,
                     const std::vector<float> &average_similarities,
                     std::size_t point_count,
-                    double threshold,
-                    bool force) {
+                    double threshold) {
     if (left == right || !clusters[left].active || !clusters[right].active) return;
     if (right < left) std::swap(left, right);
     const float score = average_similarities[left * point_count + right];
-    if (!force && score < threshold) return;
+    if (score < threshold) return;
     queue.push({score, left, right, versions[left], versions[right]});
 }
 
@@ -173,6 +171,7 @@ ClusterResult cluster_embeddings(const std::vector<EmbeddingPoint> &points,
         normalized_points[index] = normalized(points[index].embedding);
         if (!normalized_points[index].empty()) valid_indices.push_back(index);
     }
+    result.noise_window_count = points.size() - valid_indices.size();
     if (valid_indices.empty()) return result;
 
     std::sort(valid_indices.begin(), valid_indices.end(), [&points](std::size_t left, std::size_t right) {
@@ -209,7 +208,7 @@ ClusterResult cluster_embeddings(const std::vector<EmbeddingPoint> &points,
     for (std::size_t left = 0; left < point_count; ++left) {
         for (std::size_t right = left + 1; right < point_count; ++right) {
             push_candidate(merge_queue, left, right, clusters, versions, average_similarities,
-                           point_count, options.cluster_threshold, false);
+                           point_count, options.cluster_threshold);
         }
     }
 
@@ -222,94 +221,15 @@ ClusterResult cluster_embeddings(const std::vector<EmbeddingPoint> &points,
         for (std::size_t other = 0; other < clusters.size(); ++other) {
             if (other != merged && clusters[other].active) {
                 push_candidate(merge_queue, merged, other, clusters, versions, average_similarities,
-                               point_count, options.cluster_threshold, false);
+                               point_count, options.cluster_threshold);
             }
         }
     }
 
-    // max_speakers is a hard cap.  This second queue is created only if
-    // threshold-based clustering really left too many clusters, so ordinary
-    // meeting recordings do not pay for a large all-pairs heap twice.
-    if (active_count(clusters) > options.max_speakers) {
-        std::priority_queue<PairCandidate, std::vector<PairCandidate>, PairWorseFirst> forced_queue;
-        for (std::size_t left = 0; left < point_count; ++left) {
-            if (!clusters[left].active) continue;
-            for (std::size_t right = left + 1; right < point_count; ++right) {
-                if (clusters[right].active) {
-                    push_candidate(forced_queue, left, right, clusters, versions, average_similarities,
-                                   point_count, options.cluster_threshold, true);
-                }
-            }
-        }
-        while (active_count(clusters) > options.max_speakers && !forced_queue.empty()) {
-            const PairCandidate candidate = forced_queue.top();
-            forced_queue.pop();
-            if (!valid_pair(candidate, clusters, versions)) continue;
-            merge_clusters(candidate.left, candidate.right, clusters, versions, average_similarities, point_count);
-            const std::size_t merged = std::min(candidate.left, candidate.right);
-            for (std::size_t other = 0; other < clusters.size(); ++other) {
-                if (other != merged && clusters[other].active) {
-                    push_candidate(forced_queue, merged, other, clusters, versions, average_similarities,
-                                   point_count, options.cluster_threshold, true);
-                }
-            }
-        }
-    }
-
-    // Small clusters are treated conservatively.  Attach one only when it is
-    // close to a stable cluster; otherwise leave its points as unknown/noise
-    // rather than polluting a known speaker prototype.
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        std::size_t smallest = point_count;
-        for (std::size_t index = 0; index < clusters.size(); ++index) {
-            if (!clusters[index].active || clusters[index].members.size() >= options.min_cluster_size) continue;
-            if (smallest == point_count || clusters[index].members.size() < clusters[smallest].members.size() ||
-                (clusters[index].members.size() == clusters[smallest].members.size() &&
-                 clusters[index].canonical_key < clusters[smallest].canonical_key)) {
-                smallest = index;
-            }
-        }
-        if (smallest == point_count) break;
-
-        std::size_t best_target = point_count;
-        float best_score = -1.0f;
-        for (std::size_t target = 0; target < clusters.size(); ++target) {
-            if (target == smallest || !clusters[target].active ||
-                clusters[target].members.size() < options.min_cluster_size) continue;
-            const float score = average_similarities[smallest * point_count + target];
-            if (score > best_score || (score == best_score && target < best_target)) {
-                best_score = score;
-                best_target = target;
-            }
-        }
-        if (best_target != point_count && best_score >= options.cluster_threshold - kSmallClusterAttachSlack) {
-            merge_clusters(smallest, best_target, clusters, versions, average_similarities, point_count);
-            changed = true;
-        } else {
-            // No safe target.  Mark this cluster as noise by deactivating it;
-            // its member labels remain -1 and cannot influence a prototype.
-            clusters[smallest].active = false;
-            ++versions[smallest];
-            changed = true;
-        }
-    }
-
-    // If the whole input is shorter than minClusterSize, retaining the
-    // canonical largest cluster keeps short recordings useful.  Other tiny
-    // clusters stay noise.  This is the only exception to the noise rule.
-    if (active_count(clusters) == 0) {
-        std::size_t largest = 0;
-        for (std::size_t index = 1; index < clusters.size(); ++index) {
-            if (clusters[index].members.size() > clusters[largest].members.size() ||
-                (clusters[index].members.size() == clusters[largest].members.size() &&
-                 clusters[index].canonical_key < clusters[largest].canonical_key)) {
-                largest = index;
-            }
-        }
-        clusters[largest].active = true;
-    }
+    // max_speakers is a compatibility warning ceiling.  Threshold-backed
+    // clusters and their labels are intentionally left untouched.
+    result.post_threshold_cluster_count = active_count(clusters);
+    result.speaker_count_exceeded = result.post_threshold_cluster_count > options.max_speakers;
 
     std::vector<std::size_t> final_clusters;
     for (std::size_t index = 0; index < clusters.size(); ++index) {
@@ -325,7 +245,9 @@ ClusterResult cluster_embeddings(const std::vector<EmbeddingPoint> &points,
     for (std::size_t output_id = 0; output_id < final_clusters.size(); ++output_id) {
         const WorkingCluster &cluster = clusters[final_clusters[output_id]];
         const std::vector<float> prototype = cluster_prototype(cluster, normalized_points);
-        result.clusters.push_back({static_cast<int>(output_id), cluster.members.size(), cluster.canonical_key, prototype});
+        const std::string stability = cluster.members.size() < options.min_cluster_size ? "transient" : "stable";
+        if (stability == "transient") ++result.transient_cluster_count;
+        result.clusters.push_back({static_cast<int>(output_id), cluster.members.size(), cluster.canonical_key, prototype, stability});
         for (const std::size_t member : cluster.members) {
             result.labels[member] = static_cast<int>(output_id);
             result.scores[member] = cosine(normalized_points[member], prototype);
@@ -335,47 +257,282 @@ ClusterResult cluster_embeddings(const std::vector<EmbeddingPoint> &points,
     return result;
 }
 
-std::vector<SegmentAssignment> map_windows_to_segments(const std::vector<TimelineWindow> &windows,
-                                                       const std::vector<int> &window_labels,
-                                                       std::size_t segment_count) {
-    struct Vote {
-        std::map<int, double> weights;
-        double unknown_weight = 0.0;
-        std::size_t count = 0;
+TimelineResult assign_speaker_timeline(const std::vector<TimelineWindow> &windows,
+                                       const ClusterResult &clustering,
+                                       std::size_t segment_count,
+                                       const TimelineOptions &requested_options) {
+    enum class Stability {
+        stable,
+        transient,
+        unknown,
     };
-    std::vector<Vote> votes(segment_count);
-    for (std::size_t index = 0; index < windows.size() && index < window_labels.size(); ++index) {
-        const TimelineWindow &window = windows[index];
-        if (window.segment_index >= segment_count || window.end <= window.start) continue;
-        const double overlap = window.end - window.start;
-        Vote &vote = votes[window.segment_index];
-        ++vote.count;
-        const int label = window_labels[index];
-        if (label >= 0) vote.weights[label] += overlap;
-        else vote.unknown_weight += overlap;
+    struct Evidence {
+        TimelineWindow window;
+        int label = -1;
+        double score = 0.0;
+        std::size_t source_index = 0;
+    };
+    struct RawSpan {
+        std::size_t segment_index = 0;
+        std::string canonical_key;
+        double start = 0.0;
+        double end = 0.0;
+        int raw_cluster = -1;
+        int presentation_cluster = -1;
+        double confidence = 0.0;
+        Stability stability = Stability::unknown;
+    };
+
+    TimelineOptions options = requested_options;
+    if (!std::isfinite(options.micro_noise_max_seconds) || options.micro_noise_max_seconds < 0.0) {
+        options.micro_noise_max_seconds = 0.40;
+    }
+    if (!std::isfinite(options.transient_bridge_max_seconds) || options.transient_bridge_max_seconds < 0.0) {
+        options.transient_bridge_max_seconds = 1.50;
+    }
+    if (!std::isfinite(options.bridge_max_gap_seconds) || options.bridge_max_gap_seconds < 0.0) {
+        options.bridge_max_gap_seconds = 0.50;
     }
 
-    std::vector<SegmentAssignment> result(segment_count);
+    const auto cluster_stability = [&clustering](int label) {
+        if (label < 0) return Stability::unknown;
+        const auto summary = std::find_if(clustering.clusters.begin(), clustering.clusters.end(), [label](const ClusterSummary &item) {
+            return item.id == label;
+        });
+        if (summary == clustering.clusters.end()) return Stability::unknown;
+        return summary->stability == "transient" ? Stability::transient : Stability::stable;
+    };
+
+    std::vector<std::vector<Evidence>> evidence(segment_count);
+    for (std::size_t index = 0; index < windows.size() && index < clustering.labels.size(); ++index) {
+        const TimelineWindow &window = windows[index];
+        if (window.segment_index >= segment_count || window.end <= window.start ||
+            !std::isfinite(window.start) || !std::isfinite(window.end)) continue;
+        evidence[window.segment_index].push_back({
+            window,
+            clustering.labels[index],
+            index < clustering.scores.size() ? clustering.scores[index] : 0.0,
+            index,
+        });
+    }
+
+    TimelineResult result;
+    result.assignments.resize(segment_count);
+    std::vector<std::vector<RawSpan>> raw_spans(segment_count);
     for (std::size_t segment = 0; segment < segment_count; ++segment) {
-        const Vote &vote = votes[segment];
-        result[segment].window_count = vote.count;
-        double total_weight = vote.unknown_weight;
-        for (const auto &[label, weight] : vote.weights) total_weight += weight;
-        if (total_weight <= 0.0 || vote.weights.empty()) continue;
+        auto &segment_evidence = evidence[segment];
+        std::sort(segment_evidence.begin(), segment_evidence.end(), [](const Evidence &left, const Evidence &right) {
+            const double left_center = (left.window.start + left.window.end) / 2.0;
+            const double right_center = (right.window.start + right.window.end) / 2.0;
+            if (left_center != right_center) return left_center < right_center;
+            if (left.window.key != right.window.key) return left.window.key < right.window.key;
+            if (left.window.start != right.window.start) return left.window.start < right.window.start;
+            if (left.window.end != right.window.end) return left.window.end < right.window.end;
+            if (left.label != right.label) return left.label < right.label;
+            return left.source_index < right.source_index;
+        });
+
+        if (segment_evidence.empty()) continue;
+        double segment_start = std::numeric_limits<double>::infinity();
+        double segment_end = -std::numeric_limits<double>::infinity();
+        for (const Evidence &item : segment_evidence) {
+            const bool has_segment_bounds = std::isfinite(item.window.segment_start) &&
+                                            std::isfinite(item.window.segment_end) &&
+                                            item.window.segment_end > item.window.segment_start;
+            const double start = has_segment_bounds ? item.window.segment_start : item.window.start;
+            const double end = has_segment_bounds ? item.window.segment_end : item.window.end;
+            segment_start = std::min(segment_start, start);
+            segment_end = std::max(segment_end, end);
+        }
+        if (!std::isfinite(segment_start) || !std::isfinite(segment_end) || segment_end <= segment_start) continue;
+
+        std::vector<double> span_weights;
+        std::vector<double> span_confidence_weights;
+        auto &spans = raw_spans[segment];
+        spans.reserve(segment_evidence.size());
+        span_weights.reserve(segment_evidence.size());
+        span_confidence_weights.reserve(segment_evidence.size());
+        std::map<int, double> raw_weights;
+        double raw_unknown_weight = 0.0;
+        for (std::size_t index = 0; index < segment_evidence.size(); ++index) {
+            const Evidence &item = segment_evidence[index];
+            const double center = (item.window.start + item.window.end) / 2.0;
+            const double previous_center = index == 0
+                ? segment_start
+                : (segment_evidence[index - 1].window.start + segment_evidence[index - 1].window.end) / 2.0;
+            const double next_center = index + 1 == segment_evidence.size()
+                ? segment_end
+                : (segment_evidence[index + 1].window.start + segment_evidence[index + 1].window.end) / 2.0;
+            const double left = index == 0
+                ? segment_start
+                : std::max(segment_start, std::min(segment_end, (previous_center + center) / 2.0));
+            const double right = index + 1 == segment_evidence.size()
+                ? segment_end
+                : std::max(segment_start, std::min(segment_end, (center + next_center) / 2.0));
+            if (right <= left) continue;
+            const double weight = right - left;
+            const int label = item.label >= 0 ? item.label : -1;
+            const double confidence = label >= 0 && std::isfinite(item.score)
+                ? std::max(0.0, std::min(1.0, item.score))
+                : 0.0;
+            const Stability stability = cluster_stability(label);
+            const int trusted_label = stability == Stability::unknown ? -1 : label;
+            ++result.assignments[segment].window_count;
+            if (trusted_label >= 0) raw_weights[trusted_label] += weight;
+            else raw_unknown_weight += weight;
+
+            if (!spans.empty() && spans.back().raw_cluster == trusted_label && spans.back().stability == stability &&
+                std::abs(spans.back().end - left) <= 1e-9) {
+                spans.back().end = right;
+                spans.back().canonical_key = std::min(spans.back().canonical_key, item.window.key);
+                span_weights.back() += weight;
+                span_confidence_weights.back() += confidence * weight;
+            } else {
+                spans.push_back({segment, item.window.key, left, right, trusted_label, trusted_label, confidence, stability});
+                span_weights.push_back(weight);
+                span_confidence_weights.push_back(confidence * weight);
+            }
+        }
+
+        for (std::size_t index = 0; index < spans.size(); ++index) {
+            if (span_weights[index] > 0.0) {
+                spans[index].confidence = span_confidence_weights[index] / span_weights[index];
+            }
+            if (spans[index].stability == Stability::transient) ++result.metrics.raw_transient_span_count;
+        }
+        double total_weight = raw_unknown_weight;
+        for (const auto &[label, weight] : raw_weights) total_weight += weight;
+        double best_weight = -1.0;
+        for (const auto &[label, weight] : raw_weights) {
+            (void)label;
+            best_weight = std::max(best_weight, weight);
+        }
+        if (total_weight > 0.0 && !raw_weights.empty()) {
+            const double raw_purity = best_weight / total_weight;
+            const bool raw_mixed = raw_weights.size() > 1 ||
+                                   raw_unknown_weight / total_weight >= (1.0 - kMixedSpeakerPurity) ||
+                                   raw_purity < kMixedSpeakerPurity;
+            if (raw_mixed) ++result.metrics.raw_mixed_segment_count;
+        }
+    }
+
+    struct SpanReference {
+        RawSpan *span = nullptr;
+    };
+    std::vector<SpanReference> global;
+    for (auto &segment_spans : raw_spans) {
+        for (auto &span : segment_spans) global.push_back({&span});
+    }
+    std::sort(global.begin(), global.end(), [](const SpanReference &left_ref, const SpanReference &right_ref) {
+        const RawSpan &left = *left_ref.span;
+        const RawSpan &right = *right_ref.span;
+        if (left.start != right.start) return left.start < right.start;
+        if (left.end != right.end) return left.end < right.end;
+        if (left.canonical_key != right.canonical_key) return left.canonical_key < right.canonical_key;
+        if (left.raw_cluster != right.raw_cluster) return left.raw_cluster < right.raw_cluster;
+        return left.segment_index < right.segment_index;
+    });
+
+    std::size_t cursor = 0;
+    while (cursor < global.size()) {
+        RawSpan &first = *global[cursor].span;
+        if (first.stability != Stability::transient) {
+            ++cursor;
+            continue;
+        }
+        std::size_t island_end = cursor + 1;
+        double transient_seconds = first.end - first.start;
+        while (island_end < global.size()) {
+            const RawSpan &previous = *global[island_end - 1].span;
+            const RawSpan &next = *global[island_end].span;
+            const double internal_gap = std::max(0.0, next.start - previous.end);
+            if (next.stability != Stability::transient || next.raw_cluster != first.raw_cluster ||
+                internal_gap > options.bridge_max_gap_seconds) break;
+            transient_seconds += next.end - next.start;
+            ++island_end;
+        }
+        const std::size_t island_span_count = island_end - cursor;
+        if (transient_seconds < options.micro_noise_max_seconds) {
+            for (std::size_t index = cursor; index < island_end; ++index) {
+                global[index].span->presentation_cluster = -1;
+                global[index].span->confidence = 0.0;
+            }
+            result.metrics.micro_noise_span_count += island_span_count;
+            cursor = island_end;
+            continue;
+        }
+
+        bool bridged = false;
+        if (transient_seconds <= options.transient_bridge_max_seconds && cursor > 0 && island_end < global.size()) {
+            const RawSpan &left = *global[cursor - 1].span;
+            const RawSpan &right = *global[island_end].span;
+            const double left_gap = std::max(0.0, first.start - left.end);
+            const double right_gap = std::max(0.0, right.start - global[island_end - 1].span->end);
+            bridged = left.stability == Stability::stable && right.stability == Stability::stable &&
+                      left.raw_cluster >= 0 && left.raw_cluster == right.raw_cluster &&
+                      left_gap <= options.bridge_max_gap_seconds && right_gap <= options.bridge_max_gap_seconds;
+            if (bridged) {
+                const double context_confidence = (left.confidence + right.confidence) / 2.0;
+                for (std::size_t index = cursor; index < island_end; ++index) {
+                    global[index].span->presentation_cluster = left.raw_cluster;
+                    global[index].span->confidence = context_confidence;
+                }
+                result.metrics.bridged_transient_span_count += island_span_count;
+            }
+        }
+        if (!bridged) {
+            for (std::size_t index = cursor; index < island_end; ++index) {
+                global[index].span->presentation_cluster = -1;
+                global[index].span->confidence = 0.0;
+            }
+            result.metrics.suppressed_transient_span_count += island_span_count;
+        }
+        cursor = island_end;
+    }
+
+    for (std::size_t segment = 0; segment < segment_count; ++segment) {
+        std::map<int, double> stable_weights;
+        double total_weight = 0.0;
+        std::vector<double> presentation_weights;
+        std::vector<double> presentation_confidence_weights;
+        for (const RawSpan &raw : raw_spans[segment]) {
+            const double weight = raw.end - raw.start;
+            if (weight <= 0.0) continue;
+            total_weight += weight;
+            if (raw.presentation_cluster >= 0) stable_weights[raw.presentation_cluster] += weight;
+            auto &spans = result.assignments[segment].speaker_spans;
+            if (!spans.empty() && spans.back().cluster == raw.presentation_cluster &&
+                std::abs(spans.back().end - raw.start) <= 1e-9) {
+                spans.back().end = raw.end;
+                presentation_weights.back() += weight;
+                presentation_confidence_weights.back() += raw.confidence * weight;
+            } else {
+                spans.push_back({raw.start, raw.end, raw.presentation_cluster, raw.confidence});
+                presentation_weights.push_back(weight);
+                presentation_confidence_weights.push_back(raw.confidence * weight);
+            }
+        }
+        auto &assignment = result.assignments[segment];
+        for (std::size_t index = 0; index < assignment.speaker_spans.size(); ++index) {
+            if (presentation_weights[index] > 0.0) {
+                assignment.speaker_spans[index].confidence =
+                    presentation_confidence_weights[index] / presentation_weights[index];
+            }
+        }
+        if (total_weight <= 0.0 || stable_weights.empty()) continue;
 
         int best_label = -1;
         double best_weight = -1.0;
-        for (const auto &[label, weight] : vote.weights) {
-            if (weight > best_weight || (weight == best_weight && label < best_label)) {
+        for (const auto &[label, weight] : stable_weights) {
+            if (weight > best_weight || (weight == best_weight && (best_label < 0 || label < best_label))) {
                 best_label = label;
                 best_weight = weight;
             }
         }
-        result[segment].cluster = best_label;
-        result[segment].speaker_purity = std::max(0.0, std::min(1.0, best_weight / total_weight));
-        result[segment].mixed_speaker = vote.weights.size() > 1 ||
-                                        vote.unknown_weight / total_weight >= (1.0 - kMixedSpeakerPurity) ||
-                                        result[segment].speaker_purity < kMixedSpeakerPurity;
+        assignment.cluster = best_label;
+        assignment.speaker_purity = std::max(0.0, std::min(1.0, best_weight / total_weight));
+        assignment.mixed_speaker = stable_weights.size() > 1;
+        if (assignment.mixed_speaker) ++result.metrics.presentation_mixed_segment_count;
     }
     return result;
 }
