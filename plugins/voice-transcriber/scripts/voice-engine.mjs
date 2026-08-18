@@ -229,7 +229,17 @@ async function writeText(file, value) {
   const temporary = `${file}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
   try {
     await fs.writeFile(temporary, value, { encoding: "utf8", mode: PRIVATE_FILE_MODE, flag: "wx" });
-    await fs.rename(temporary, file);
+    const renameAttempts = process.platform === "win32" ? 8 : 1;
+    for (let attempt = 0; attempt < renameAttempts; attempt += 1) {
+      try {
+        await fs.rename(temporary, file);
+        break;
+      } catch (error) {
+        const retryable = process.platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(error.code);
+        if (!retryable || attempt === renameAttempts - 1) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      }
+    }
     if (process.platform !== "win32") await fs.chmod(file, PRIVATE_FILE_MODE);
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => {});
