@@ -35,15 +35,25 @@ input.on("line", (line) => {
     jsonrpc: "2.0",
     id: request.id,
     result: {
-      algorithmVersion: "speaker-v4",
+      algorithmVersion: "speaker-v5",
       segments,
       clusters: [{
         clusterId: "cluster_0",
         size: 1,
         windowCount: 1,
         stability: "transient",
+        trusted: false,
+        strong: false,
         prototype: [1, 0, 0, 0],
       }],
+      quality: {
+        state: "degraded",
+        trustedSpeakerCount: 0,
+        trustedCoverage: 0,
+        unknownRatio: 1,
+        mixedRatio: 0,
+        reasonCodes: ["no_trusted_speakers"],
+      },
       metrics: {
         windowCount: 1,
         validWindowCount: 1,

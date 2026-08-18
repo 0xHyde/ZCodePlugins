@@ -110,5 +110,17 @@ for (const entry of marketplace.plugins) {
     }
   }
 
+  const darwinRuntime = path.join(pluginPath, "bin", "darwin", "arm64");
+  if (await exists(darwinRuntime)) {
+    for (const executable of ["ffmpeg", "llama-funasr-sensevoice", "campp-adapter"]) {
+      const file = path.join(darwinRuntime, executable);
+      if (!(await exists(file))) continue;
+      const stat = await fs.stat(file);
+      if ((stat.mode & 0o111) === 0) {
+        throw new Error(`${file}: macOS runtime is not executable`);
+      }
+    }
+  }
+
   console.log(`ok ${manifest.name}`);
 }

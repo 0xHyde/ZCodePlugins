@@ -11,6 +11,11 @@ import { ensureRuntime } from "./runtime-bootstrap.mjs";
 import { resolveRuntimeCommand } from "./runtime.mjs";
 import { parseSenseVoiceOutput } from "./sensevoice-parser.mjs";
 import { prepareAudio, splitAudio } from "./audio-prep.mjs";
+import {
+  SPEAKER_ALGORITHM_VERSION,
+  finalizeSpeakerAnalysis,
+  publicSpeakerAnalysis,
+} from "./speaker-analyzer.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataRoot = process.env.ZCODE_VOICE_DATA_DIR || path.join(os.homedir(), ".zcode", "voice-transcriber");
@@ -21,9 +26,9 @@ const artifactRoot = path.join(dataRoot, "artifacts");
 const modelRoot = path.join(dataRoot, "models");
 const pluginPackage = JSON.parse(await fs.readFile(path.join(pluginRoot, "package.json"), "utf8"));
 const PLUGIN_VERSION = pluginPackage.version;
-const PIPELINE_VERSION = "voice-transcriber-v0.4-speaker-v4.0";
+const PIPELINE_VERSION = "voice-transcriber-v0.4-speaker-v5.0";
 const ASR_PIPELINE_VERSION = "asr-v2";
-const SPEAKER_PIPELINE_VERSION = "speaker-v4";
+const SPEAKER_PIPELINE_VERSION = SPEAKER_ALGORITHM_VERSION;
 const STAGE_CACHE_VERSION = 2;
 const ASR_CHECKPOINT_VERSION = 1;
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -577,6 +582,11 @@ function makeCacheIdentity(audioPath, stat, options, profilesFingerprint) {
       adapter: options.speakerProfile ? (process.env.ZCODE_CAMPP_COMMAND || "campp-adapter") : null,
       adapterArgs: options.speakerProfile ? (process.env.ZCODE_CAMPP_ARGS || null) : null,
       clusterThreshold: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_CLUSTER_THRESHOLD || 0.45) : null,
+      microThreshold: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_MICRO_THRESHOLD || 0.72) : null,
+      consolidateThreshold: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_CONSOLIDATE_THRESHOLD || 0.38) : null,
+      consolidateFloor: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_CONSOLIDATE_FLOOR || 0.22) : null,
+      consolidateMargin: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_CONSOLIDATE_MARGIN || 0.035) : null,
+      establishedMergeThreshold: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_ESTABLISHED_MERGE_THRESHOLD || 0.58) : null,
       minClusterSize: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_MIN_CLUSTER_SIZE || 2) : null,
       minSpeakers: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_MIN_SPEAKERS || 1) : null,
       maxSpeakers: options.speakerProfile ? Number(process.env.ZCODE_CAMPP_MAX_SPEAKERS || 64) : null,
@@ -1291,36 +1301,28 @@ function normalizedOrNull(value) {
 function normalizeSpeakerClusters(result) {
   if (!Array.isArray(result?.clusters)) return [];
   return result.clusters.map((summary, index) => {
-    const clusterId = normalizeClusterId(summary?.clusterId ?? summary?.id ?? index);
-    if (!clusterId) return null;
+    const voicedSeconds = Number.isFinite(summary?.voicedSeconds) ? summary.voicedSeconds : null;
+    const independentEvidence = Math.max(0, Number(summary?.independentEvidence || 0));
+    const trusted = summary?.trusted === true
+      || (summary?.trusted !== false && summary?.stability === "stable"
+        && (independentEvidence >= 3 || (voicedSeconds !== null && voicedSeconds >= 3)));
+    const clusterId = normalizeClusterId(summary?.clusterId ?? summary?.id ?? (trusted ? index : null));
+    if (trusted && !clusterId) return null;
     const prototype = normalizedOrNull(summary?.prototype);
     return {
       clusterId,
       size: Math.max(0, Number(summary?.size ?? summary?.windowCount ?? 0) || 0),
       windowCount: Math.max(0, Number(summary?.windowCount ?? summary?.size ?? 0) || 0),
-      voicedSeconds: Number.isFinite(summary?.voicedSeconds) ? summary.voicedSeconds : null,
+      voicedSeconds,
+      independentEvidence,
+      coherence: Number.isFinite(summary?.coherence) ? summary.coherence : null,
       canonicalKey: typeof summary?.canonicalKey === "string" ? summary.canonicalKey : null,
-      stability: summary?.stability === "transient" ? "transient" : "stable",
+      stability: trusted ? "stable" : "transient",
+      trusted,
+      strong: summary?.strong === true,
       ...(prototype ? { prototype } : {}),
     };
-  }).filter(Boolean);
-}
-
-function publicSpeakerAnalysis(analysis) {
-  if (!analysis) return null;
-  return {
-    status: analysis.status,
-    algorithmVersion: analysis.algorithmVersion || null,
-    metrics: analysis.metrics || {},
-    clusters: (analysis.clusters || []).map((cluster) => ({
-      clusterId: cluster.clusterId,
-      size: cluster.size,
-      windowCount: cluster.windowCount,
-      voicedSeconds: cluster.voicedSeconds,
-      stability: cluster.stability,
-    })),
-    ...(analysis.code ? { code: analysis.code } : {}),
-  };
+  }).filter((cluster) => cluster && (cluster.clusterId || !cluster.trusted));
 }
 
 function embeddingEntries(result, segments) {
@@ -1351,7 +1353,7 @@ function matchSpeakerClusters(segments, clusters, profiles) {
   const matches = new Map();
 
   for (const cluster of clusters) {
-    if (cluster.stability !== "stable") continue;
+    if (cluster.trusted !== true || cluster.stability !== "stable") continue;
     const prototype = normalizedOrNull(cluster.prototype);
     if (!prototype || !usableProfiles.length) continue;
     const ranked = usableProfiles.map((profile) => ({
@@ -1443,30 +1445,24 @@ async function analyzeSpeakers(audioPath, segments) {
       model: modelInfo.exists ? modelInfo.path : null,
     });
     if (!Array.isArray(result?.segments)) throw fail("CAM++ adapter 没有返回 segments。", "invalid_speaker_result");
-    const clusters = normalizeSpeakerClusters(result);
-    const algorithmVersion = String(result.algorithmVersion || (Array.isArray(result.clusters) ? SPEAKER_PIPELINE_VERSION : "speaker-v1"));
-    const diarizedSegments = result.segments.map((segment) => {
-      const speakerCluster = segmentCluster(segment);
-      return { ...segment, ...(speakerCluster ? { speakerCluster } : {}) };
-    });
+    const finalized = finalizeSpeakerAnalysis({
+      ...result,
+      clusters: normalizeSpeakerClusters(result),
+      algorithmVersion: String(result.algorithmVersion || "speaker-v1"),
+    }, segments);
+    const algorithmVersion = finalized.privateAnalysis.algorithmVersion;
     const matchedSegments = algorithmVersion === SPEAKER_PIPELINE_VERSION
-      ? diarizedSegments
+      ? finalized.segments
       : await matchKnownSpeakersLegacy(
         audioPath,
-        diarizedSegments,
+        finalized.segments,
         modelInfo.exists ? modelInfo.path : null,
         await getProfiles(),
       );
-    const privateAnalysis = {
-      status: "completed",
-      algorithmVersion,
-      metrics: result.metrics && typeof result.metrics === "object" ? result.metrics : {},
-      clusters,
-    };
     return {
       segments: matchedSegments,
-      privateAnalysis,
-      publicAnalysis: publicSpeakerAnalysis(privateAnalysis),
+      privateAnalysis: finalized.privateAnalysis,
+      publicAnalysis: finalized.publicAnalysis,
       cacheable: algorithmVersion === SPEAKER_PIPELINE_VERSION,
     };
   } finally {
@@ -1990,11 +1986,11 @@ function clusterLearningEmbedding(task, segmentIds) {
   const ids = new Set(segmentIds);
   const minimumPurity = Number(process.env.ZCODE_CAMPP_LEARNING_MIN_PURITY || 0.8);
   const stableClusterIds = new Set(analysis.clusters
-    .filter((cluster) => cluster.stability !== "transient")
+    .filter((cluster) => cluster.trusted === true && cluster.stability !== "transient")
     .map((cluster) => normalizeClusterId(cluster.clusterId))
     .filter(Boolean));
   const eligibleSegments = (task.segments || []).filter((segment) =>
-    ids.has(segment.id) && !segment.mixedSpeaker &&
+    ids.has(segment.id) && !segment.mixedSpeaker && segment.speaker !== "unknown" &&
     stableClusterIds.has(segmentCluster(segment)) &&
     (!Number.isFinite(segment.speakerPurity) || segment.speakerPurity >= minimumPurity));
   const clusterIds = [...new Set(eligibleSegments.map(segmentCluster).filter(Boolean))];
@@ -2004,7 +2000,7 @@ function clusterLearningEmbedding(task, segmentIds) {
     vector: cluster.prototype,
     weight: cluster.windowCount || cluster.size || 1,
   })));
-  if (!embedding) throw fail("speaker-v4 没有可用于学习的 cluster prototype。", "invalid_embedding");
+  if (!embedding) throw fail("speaker-v5 没有可用于学习的 cluster prototype。", "invalid_embedding");
   const voicedSeconds = eligibleSegments.reduce((sum, segment) => {
     const duration = Number(segment.end) - Number(segment.start);
     return sum + (Number.isFinite(duration) && duration > 0 ? duration : 0);
@@ -2050,11 +2046,13 @@ function profilePrototype(samples, fallback) {
 
 function learningSegmentsAreEligible(task, segmentIds) {
   const selected = (task?.segments || []).filter((segment) => segmentIds.includes(segment.id));
-  if (!selected.length || selected.some((segment) => segment.mixedSpeaker)) return false;
+  if (!selected.length || selected.some((segment) => segment.mixedSpeaker || segment.speaker === "unknown" || segment.speaker === "mixed")) {
+    return false;
+  }
   const analysis = task?._speakerAnalysis;
   if (analysis?.algorithmVersion !== SPEAKER_PIPELINE_VERSION || !Array.isArray(analysis.clusters)) return true;
   const stableClusterIds = new Set(analysis.clusters
-    .filter((cluster) => cluster.stability !== "transient")
+    .filter((cluster) => cluster.trusted === true && cluster.stability !== "transient")
     .map((cluster) => normalizeClusterId(cluster.clusterId))
     .filter(Boolean));
   return selected.every((segment) => {

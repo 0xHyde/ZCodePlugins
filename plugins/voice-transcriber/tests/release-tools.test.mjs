@@ -47,6 +47,14 @@ test("release runtime verifier accepts exact files and rejects stale packaged bi
     },
   }));
   try {
+    const canInspectPosixModes = process.platform !== "win32";
+    if (canInspectPosixModes) {
+      await fs.chmod(runtime, 0o644);
+      const notExecutable = spawnSync(process.execPath, [verifier, "--root", path.join(directory, "bin"), "--manifest", manifestFile], { encoding: "utf8" });
+      assert.notEqual(notExecutable.status, 0);
+      assert.match(notExecutable.stderr, /不可执行/);
+      await fs.chmod(runtime, 0o755);
+    }
     const valid = spawnSync(process.execPath, [verifier, "--root", path.join(directory, "bin"), "--manifest", manifestFile], { encoding: "utf8" });
     assert.equal(valid.status, 0, valid.stderr);
     const extra = path.join(runtimeDir, "old-runtime");
@@ -64,6 +72,84 @@ test("release runtime verifier accepts exact files and rejects stale packaged bi
   }
 });
 
+test("packaged macOS runtime executable bits survive a zip round-trip", async () => {
+  const zip = spawnSync("zip", ["-v"], { encoding: "utf8" });
+  const unzip = spawnSync("unzip", ["-v"], { encoding: "utf8" });
+  if (zip.error || unzip.error || (zip.status !== 0 && zip.status !== 1) || (unzip.status !== 0 && unzip.status !== 12)) {
+    return;
+  }
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "voice-release-zip-"));
+  const pluginRoot = path.join(directory, "voice-transcriber");
+  const runtimeDir = path.join(pluginRoot, "bin", "darwin", "arm64");
+  const windowsRuntimeDir = path.join(pluginRoot, "bin", "win32", "x64");
+  const payload = Buffer.from("packaged runtime");
+  await fs.mkdir(runtimeDir, { recursive: true });
+  await fs.mkdir(windowsRuntimeDir, { recursive: true });
+  for (const name of ["ffmpeg", "llama-funasr-sensevoice", "campp-adapter"]) {
+    const file = path.join(runtimeDir, name);
+    await fs.writeFile(file, payload);
+    await fs.chmod(file, 0o755);
+  }
+  await fs.writeFile(path.join(windowsRuntimeDir, "campp-adapter.exe"), payload);
+  const manifestFile = path.join(directory, "runtime-manifest.json");
+  const digest = crypto.createHash("sha256").update(payload).digest("hex");
+  await fs.writeFile(manifestFile, JSON.stringify({
+    version: "test",
+    platforms: {
+      "darwin-arm64": {
+        files: ["ffmpeg", "llama-funasr-sensevoice", "campp-adapter"].map((name) => ({ name, sha256: digest })),
+      },
+      "win32-x64": {
+        files: [{ name: "campp-adapter.exe", sha256: digest }],
+      },
+    },
+  }));
+  try {
+    const zipPath = path.join(directory, "voice-transcriber-plugin-test.zip");
+    const packed = spawnSync("zip", ["-q", "-r", zipPath, "voice-transcriber"], { cwd: directory, encoding: "utf8" });
+    assert.equal(packed.status, 0, packed.stderr);
+    const unpacked = path.join(directory, "unpacked");
+    await fs.mkdir(unpacked);
+    const extracted = spawnSync("unzip", ["-q", zipPath, "-d", unpacked], { encoding: "utf8" });
+    assert.equal(extracted.status, 0, extracted.stderr);
+    const verified = spawnSync(process.execPath, [
+      verifier,
+      "--root",
+      path.join(unpacked, "voice-transcriber", "bin"),
+      "--manifest",
+      manifestFile,
+    ], { encoding: "utf8" });
+    assert.equal(verified.status, 0, verified.stderr);
+    if (process.platform !== "win32") {
+      for (const name of ["ffmpeg", "llama-funasr-sensevoice", "campp-adapter"]) {
+        const stat = await fs.stat(path.join(unpacked, "voice-transcriber", "bin", "darwin", "arm64", name));
+        assert.notEqual(stat.mode & 0o111, 0, `${name} lost executable bits in the package zip`);
+      }
+    }
+
+    if (process.platform !== "win32") {
+      await fs.chmod(path.join(runtimeDir, "ffmpeg"), 0o644);
+      const brokenZip = path.join(directory, "voice-transcriber-plugin-broken.zip");
+      const packedBroken = spawnSync("zip", ["-q", "-r", brokenZip, "voice-transcriber"], { cwd: directory, encoding: "utf8" });
+      assert.equal(packedBroken.status, 0, packedBroken.stderr);
+      const unpackedBroken = path.join(directory, "unpacked-broken");
+      await fs.mkdir(unpackedBroken);
+      spawnSync("unzip", ["-q", brokenZip, "-d", unpackedBroken], { encoding: "utf8" });
+      const rejected = spawnSync(process.execPath, [
+        verifier,
+        "--root",
+        path.join(unpackedBroken, "voice-transcriber", "bin"),
+        "--manifest",
+        manifestFile,
+      ], { encoding: "utf8" });
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stderr, /不可执行/);
+    }
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("release workflow treats semantic prerelease tags as GitHub prereleases", async () => {
   const workflow = await fs.readFile(releaseWorkflow, "utf8");
   assert.match(workflow, /RELEASE_TAG.*==.*\*-\*/s);
@@ -73,6 +159,9 @@ test("release workflow treats semantic prerelease tags as GitHub prereleases", a
   assert.match(workflow, /--json isPrerelease/);
   assert.match(workflow, /publish:[\s\S]*permissions:\s*\n\s*contents: write/);
   assert.match(workflow, /chmod 755[\s\S]*darwin\/arm64\/campp-adapter/);
+  assert.match(workflow, /test -x "\$unpacked\/voice-transcriber\/bin\/darwin\/arm64\/campp-adapter"/);
+  assert.match(workflow, /test -x "\$unpacked\/voice-transcriber\/bin\/darwin\/arm64\/ffmpeg"/);
+  assert.match(workflow, /test -x "\$unpacked\/voice-transcriber\/bin\/darwin\/arm64\/llama-funasr-sensevoice"/);
 });
 
 test("release workflow pins audited native inputs and publishes the exact FFmpeg source", async () => {

@@ -19,6 +19,7 @@ const manifestOption = option("manifest");
 if (!rootOption || !manifestOption) throw new Error("需要 --root 和 --manifest。");
 const root = path.resolve(rootOption);
 const manifestFile = path.resolve(manifestOption);
+const canInspectPosixModes = process.platform !== "win32";
 const manifest = JSON.parse(await fs.readFile(manifestFile, "utf8"));
 const expectedPlatforms = ["darwin-arm64", "win32-x64"];
 const actualPlatforms = Object.keys(manifest.platforms || {}).sort();
@@ -44,6 +45,11 @@ for (const [platformKey, platform] of Object.entries(manifest.platforms || {})) 
     if (!stat?.isFile()) throw new Error(`最终插件缺少 runtime：${platformKey}/${entry.name}`);
     if (await sha256(file) !== entry.sha256.toLowerCase()) {
       throw new Error(`最终插件 runtime SHA 不匹配：${platformKey}/${entry.name}`);
+    }
+    if (canInspectPosixModes && platformKey.startsWith("darwin-") && /^(?:ffmpeg|llama-funasr-sensevoice|campp-adapter)$/.test(entry.name)) {
+      if ((stat.mode & 0o111) === 0) {
+        throw new Error(`最终插件 macOS runtime 不可执行：${platformKey}/${entry.name}`);
+      }
     }
   }
   const actualNames = (await fs.readdir(directory, { withFileTypes: true }))

@@ -33,12 +33,20 @@ input.on("line", (line) => {
       jsonrpc: "2.0",
       id: request.id,
       result: {
-        algorithmVersion: "speaker-v4",
+        algorithmVersion: "speaker-v5",
         segments,
         clusters: [
-          { clusterId: "cluster_0", size: 2, windowCount: 2, stability: "stable", prototype: embedding },
-          { clusterId: "cluster_1", size: 2, windowCount: 2, stability: "stable", prototype: embedding },
+          { clusterId: "cluster_0", size: 8, windowCount: 8, voicedSeconds: 8, independentEvidence: 5, coherence: 0.9, stability: "stable", trusted: true, strong: true, prototype: embedding },
+          { clusterId: "cluster_1", size: 8, windowCount: 8, voicedSeconds: 8, independentEvidence: 5, coherence: 0.88, stability: "stable", trusted: true, strong: true, prototype: embedding },
         ],
+        quality: {
+          state: "reliable",
+          trustedSpeakerCount: 2,
+          trustedCoverage: 1,
+          unknownRatio: 0,
+          mixedRatio: 1,
+          reasonCodes: [],
+        },
         metrics: {
           windowCount: 2,
           validWindowCount: 2,
